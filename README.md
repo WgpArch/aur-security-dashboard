@@ -45,9 +45,22 @@ This tool is designed to be part of a professional forensic workflow. A comprehe
    python3 main.py
    ```
 
+## 🛡️ Security & Verification
+
+As a security tool, you should never blindly trust code downloaded from the internet. This project is designed with transparency in mind:
+
+1. **No Compiled Binaries:** This dashboard is written entirely in plain-text Python. There are no hidden, pre-compiled executables. You can read the entire `main.py` source code to verify exactly what it does before running it.
+2. **No Obfuscation:** The code is clean, well-commented, and uses standard library calls. There is no base64 encoding, eval tricks, or hidden network calls.
+3. **Minimal Dependencies:** It relies only on standard Arch Linux utilities (`pacman`, `systemctl`, `ss`, `journalctl`) and `python-gobject` (GTK4). It does not require `pip install` of unvetted third-party Python packages.
+4. **Local Execution:** All scanning and analysis happen 100% locally on your machine. **No data, logs, or system information is ever sent over the network.**
+
+**Recommended First Step:** 
+If you are cautious, we recommend reviewing the `main.py` file or running the dashboard inside a virtual machine or `systemd-nspawn` container for your first test run.
+
 ##  Contributing
 
-Pull requests and issue reports are welcome. If you find a false positive or have a suggestion for a new security check, please open an issue.
+Pull requests and issue reports are welcome. If you find a false positive or have a suggestion for a new security check, please 
+open an issue.
 
 ## 📄 License
 

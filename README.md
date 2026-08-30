@@ -34,16 +34,22 @@ This tool is designed to be part of a professional forensic workflow. A comprehe
 
 ## 📦 Installation & Usage
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/WgpArch/aur-security-dashboard.git
-   cd aur-security-dashboard
+### Option 1: AUR Installation (Recommended)
+Once submitted to the AUR, you can install the dashboard directly using your preferred AUR helper (e.g., `trizen`, `yay`, `paru`):
+```bash
+trizen -S aur-security-dashboard
+# or
+yay -S aur-security-dashboard
 
-   ```
-2. Run the dashboard:
-   ```bash
-   python3 main.py
-   ```
+For those who prefer to build from source and review the PKGBUILD:
+git clone https://github.com/WgpArch/aur-security-dashboard.git
+cd aur-security-dashboard
+makepkg -si
+
+If you just want to test it without installing system-wide:
+git clone https://github.com/WgpArch/aur-security-dashboard.git
+cd aur-security-dashboard
+python3 main.py
 
 ## 🛡️ Security & Verification
 

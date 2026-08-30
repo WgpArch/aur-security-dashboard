@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Arch Security Dashboard
+Comment=Forensic-grade local SIEM dashboard for Arch Linux
+Exec=aur-security-dashboard
+Icon=utilities-system-monitor
+Terminal=false
+Type=Application
+Categories=System;Security;Monitor;

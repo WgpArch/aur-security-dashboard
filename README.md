@@ -35,7 +35,7 @@ This tool is designed to be part of a professional forensic workflow. A comprehe
 ## 📦 Installation & Usage
 
 ### Option 1: AUR Installation (Recommended)
-**Note:** This package is currently being prepared for official AUR submission. In the meantime, please use **Option 2** or **Option 3** below.
+>**Note:** This package is currently being prepared for official AUR submission. In the meantime, please use **Option 2** or **Option 3** below.
 Once submitted to the AUR, you can install the dashboard directly using your preferred AUR helper (e.g., `trizen`, `yay`, `paru`):
 ```bash
 trizen -S aur-security-dashboard

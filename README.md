@@ -3,6 +3,7 @@
 A forensic-grade, local Security Information and Event Management (SIEM) dashboard built specifically for Arch Linux. 
 
 Unlike traditional security scripts that just run and dump text, this tool provides a beautiful, interactive GTK4 GUI to monitor system integrity, hunt anomalies, and audit your security posture in real-time.
+
 **⚠️ Current Threat Landscape:** The Arch User Repository (AUR) has experienced a notable increase in supply chain attacks, compromised maintainer accounts, and malicious package submissions since August of last year, with active incidents reported as recently as last week. This dashboard is designed to provide immediate, local visibility and defense against these evolving, real-world threats.
 
 ![Dashboard Screenshot](docs/screenshot-1.png)
@@ -21,7 +22,7 @@ The dashboard is divided into 9 specialized forensic tabs:
 8. **Code Inspector:** Static analysis of AUR `PKGBUILD` scripts to detect supply chain attacks, obfuscated payloads, and malicious build commands.
 9. **Hardening Posture:** Evaluates live kernel security parameters (MAC, KASLR, ptrace scope, BPF JIT) to ensure the OS core is locked down.
 
-## 📖 Incident Response Manual
+##  Incident Response Manual
 
 This tool is designed to be part of a professional forensic workflow. A comprehensive, step-by-step Incident Response Manual is included in the `docs/` directory, detailing exactly how to investigate, preserve evidence, and remediate threats found in each tab.
 
@@ -34,25 +35,31 @@ This tool is designed to be part of a professional forensic workflow. A comprehe
 
 ## 📦 Installation & Usage
 
-### Option 1: AUR Installation (Recommended)
->**Note:** This package is currently being prepared for official AUR submission. In the meantime, please use **Option 2** or **Option 3** below.
+> **Note:** This package is currently being prepared for official AUR submission. In the meantime, please use **Option 2** or **Option 3** below.
+
+### Option 1: AUR Installation (Coming Soon)
 Once submitted to the AUR, you can install the dashboard directly using your preferred AUR helper (e.g., `trizen`, `yay`, `paru`):
 ```bash
 trizen -S aur-security-dashboard
 # or
 yay -S aur-security-dashboard
+```
 
-Option 2: Manual Build & Install
+### Option 2: Manual Build & Install
 For those who prefer to build from source and review the PKGBUILD:
+```bash
 git clone https://github.com/WgpArch/aur-security-dashboard.git
 cd aur-security-dashboard
 makepkg -si
+```
 
-Option 3: Run Directly from Source
+### Option 3: Run Directly from Source
 If you just want to test it without installing system-wide:
+```bash
 git clone https://github.com/WgpArch/aur-security-dashboard.git
 cd aur-security-dashboard
 python3 main.py
+```
 
 ## 🛡️ Security & Verification
 
@@ -66,12 +73,11 @@ As a security tool, you should never blindly trust code downloaded from the inte
 **Recommended First Step:** 
 If you are cautious, we recommend reviewing the `main.py` file or running the dashboard inside a virtual machine or `systemd-nspawn` container for your first test run.
 
-##  Contributing
+## 🤝 Contributing
 
-Pull requests and issue reports are welcome. If you find a false positive or have a suggestion for a new security check, please 
-open an issue.
+Pull requests and issue reports are welcome. If you find a false positive or have a suggestion for a new security check, please open an issue.
 
-## 📄 License
+##  License
 
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 

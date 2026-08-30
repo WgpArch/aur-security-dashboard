@@ -1,5 +1,7 @@
 ##################################################
+
 Incident Response Manual: Tab 1 - AUR Packages
+
 ##################################################
 
 Purpose:
@@ -50,7 +52,9 @@ before trusting any PKGBUILD. Official Arch repositories (core, extra, multilib)
 If an official alternative exists, always prefer it over an AUR package.
 
 ######################################################
+
 Incident Response Manual: Tab 2 - Network Connections
+
 ######################################################
 
 Purpose:
@@ -132,7 +136,9 @@ without auth.
 🟢 LOW: Normal web browsing, DNS queries, expected service connections within local network.
 
 ###################################################
+
 Incident Response Manual: Tab 3 - System Integrity
+
 ###################################################
 
 Purpose:
@@ -233,7 +239,9 @@ recovery is a fresh install from verified media after preserving evidence. Packa
 guarantee all persistence mechanisms have been removed.
 
 ###########################################################
+
 Incident Response Manual: Tab 4 - SUID/SGID Binary Scanner
+
 ###########################################################
 
 Purpose:
@@ -328,7 +336,9 @@ SUID bit, assume the attacker may have already escalated privileges, created add
 rebuild from verified media is the only guaranteed remediation.
 
 #######################################################################
+
 Incident Response Manual: Tab 5 - Authentication & Brute-Force Monitor
+
 #######################################################################
 
 Purpose:
@@ -427,7 +437,9 @@ login” means “no breach”; attackers may use stolen tokens, SSH keys, or ex
 log entries.
 
 #############################################################
+
  Incident Response Manual: Tab 6 - Anomalous Process Hunter
+
 #############################################################
 
 Purpose:
@@ -544,7 +556,9 @@ difference between "we saw something suspicious" and "here is the recovered malw
 determines case outcomes.
 
 ##########################################################
+
 Incident Response Manual: Tab 7 - Systemd Service Auditor
+
 ##########################################################
 
 Purpose:
@@ -661,7 +675,9 @@ legitimate services without altering the original package-owned unit file. A ser
 have been silently modified via drop-in—a technique your dashboard must account for in future updates.
 
 ########################################################################
+
 Incident Response Manual: Tab 8 - Code Inspector (AUR PKGBUILD Scanner)
+
 ########################################################################
 
 Purpose:
@@ -760,7 +776,9 @@ primary forensic artifact. Always preserve the git history and the exact version
 will likely delete or modify it once discovered.
 
 ###########################################################
+
 Incident Response Manual: Tab 9 - System Hardening Posture
+
 ###########################################################
 
 Purpose:

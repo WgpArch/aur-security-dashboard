@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-import sys, subprocess, gi, threading, threading, threading, threading, threading
+import sys, subprocess, gi, threading
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, GLib, GLib, Adw
+from gi.repository import Gtk, GLib, Adw
 
 def get_aur_packages():
     try:
@@ -262,49 +262,53 @@ class SecurityApp(Adw.Application):
         def run_auth_scan(button):
             button.set_sensitive(False)
             button.set_label("Scanning...")
-            try:
-                log_result = subprocess.run(
-                    ["journalctl", "--since", "24 hours ago", "-g", "Failed password|Invalid user|sudo:.*COMMAND|session opened", "--no-pager", "-q"],
-                    capture_output=True, text=True, timeout=10
-                )
-                logs = log_result.stdout.strip().split('\n')
-                if not logs or (len(logs) == 1 and not logs[0].strip()):
-                    no_logs = Gtk.Label(label="No authentication events in the last 24 hours.")
-                    auth_listbox.append(no_logs)
-                else:
-                    for log in logs[-50:]:
-                        if not log.strip(): continue
-                        row = Gtk.ListBoxRow()
-                        row.set_margin_top(2)
-                        row.set_margin_bottom(2)
-                        row.set_margin_start(10)
-                        row.set_margin_end(10)
+            
+            # Clear old results
+            child = auth_listbox.get_first_child()
+            while child:
+                next_child = child.get_next_sibling()
+                if child != auth_header:
+                    auth_listbox.remove(child)
+                child = next_child
+                
+            def do_scan():
+                results = []
+                try:
+                    log_result = subprocess.run(["journalctl", "--since", "24 hours ago", "-g", "Failed password|Invalid user|sudo:.*COMMAND|session opened", "--no-pager", "-q"], capture_output=True, text=True, timeout=10)
+                    logs = log_result.stdout.strip().split('\\n')
+                    if not logs or (len(logs) == 1 and not logs[0].strip()):
+                        results.append(("NO_EVENTS", "No authentication events in the last 24 hours.", "#2ecc71"))
+                    else:
+                        for log in logs[-50:]:
+                            if not log.strip(): continue
+                            parts = log.split(' ', 3)
+                            time_str = f"{parts[0]} {parts[1]}" if len(parts) > 2 else "Unknown Time"
+                            message = parts[3] if len(parts) > 3 else log
+                            if "Failed" in message or "Invalid" in message: color, event_type = "#e74c3c", "FAILED LOGIN"
+                            elif "sudo" in message: color, event_type = "#f39c12", "SUDO USAGE"
+                            else: color, event_type = "#2ecc71", "SUCCESS"
+                            results.append((time_str, message, event_type, color))
+                except Exception as e:
+                    results.append(("Error", str(e), "ERROR", "#e74c3c"))
+                GLib.idle_add(update_auth_ui, results, button)
+
+            def update_auth_ui(results, button):
+                for res in results:
+                    row = Gtk.ListBoxRow()
+                    row.set_margin_top(2); row.set_margin_bottom(2); row.set_margin_start(10); row.set_margin_end(10)
+                    if res[0] == "NO_EVENTS":
+                        row.set_child(Gtk.Label(label=res[1], xalign=0, margin_top=20))
+                    else:
                         row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-                        parts = log.split(' ', 3)
-                        time_str = f"{parts[0]} {parts[1]}" if len(parts) > 2 else "Unknown Time"
-                        message = parts[3] if len(parts) > 3 else log
-                        if "Failed" in message or "Invalid" in message:
-                            color = "#e74c3c"
-                            event_type = "FAILED LOGIN"
-                        elif "sudo" in message:
-                            color = "#f39c12"
-                            event_type = "SUDO USAGE"
-                        else:
-                            color = "#2ecc71"
-                            event_type = "SUCCESS"
-                        time_label = Gtk.Label(label=time_str, xalign=0)
-                        time_label.set_margin_bottom(2)
-                        msg_markup = f"<span foreground='{color}' weight='bold'>[{event_type}]</span> {message}"
-                        msg_label = Gtk.Label(label=msg_markup, xalign=0, use_markup=True)
-                        msg_label.set_max_width_chars(80)
-                        msg_label.set_wrap(True)
-                        row_box.append(time_label)
-                        row_box.append(msg_label)
+                        row_box.append(Gtk.Label(label=res[0], xalign=0, margin_bottom=2))
+                        msg_markup = f"<span foreground='{res[3]}' weight='bold'>[{res[2]}]</span> {res[1]}"
+                        row_box.append(Gtk.Label(label=msg_markup, xalign=0, use_markup=True, max_width_chars=80, wrap=True))
                         row.set_child(row_box)
-                        auth_listbox.append(row)
-            except Exception as e:
-                err_label = Gtk.Label(label=f"Log fetch failed: {str(e)}")
-                auth_listbox.append(err_label)
+                    auth_listbox.append(row)
+                button.set_label("Rescan Auth Monitor")
+                button.set_sensitive(True)
+                
+            threading.Thread(target=do_scan, daemon=True).start()
 
         scan_btn = Gtk.Button(label="Start Auth Scan")
         scan_btn.connect("clicked", run_auth_scan)
@@ -331,52 +335,60 @@ class SecurityApp(Adw.Application):
         def run_proc_scan(button):
             button.set_sensitive(False)
             button.set_label("Scanning...")
-            try:
-                result = subprocess.run(["ps", "aux", "--no-headers"], capture_output=True, text=True, timeout=5)
-                processes = result.stdout.strip().split('\n')
-                suspicious_count = 0
-                for proc in processes:
-                    if not proc.strip(): continue
-                    parts = proc.split(None, 10)
-                    if len(parts) < 11: continue
-                    user, pid, cpu, mem, vsz, rss, tty, stat, start, time_cmd = parts[:10]
-                    command = parts[10] if len(parts) > 10 else ""
-                    threat_level = None
-                    reason = ""
-                    if command.startswith("["): continue
-                    if "/usr/lib/sddm/" in command or "/opt/firefox" in command or "betterbird" in command.lower(): continue
-                    if "/tmp/" in command or command.startswith("./"):
-                        threat_level = "CRITICAL"; color = "#e74c3c"; reason = "Running from /tmp or current directory"
-                    elif "/dev/shm/" in command:
-                        threat_level = "CRITICAL"; color = "#e74c3c"; reason = "Running from /dev/shm (shared memory)"
-                    elif "/var/tmp/" in command:
-                        threat_level = "HIGH"; color = "#e67e22"; reason = "Running from /var/tmp"
-                    elif user == "root" and ("python" in command or "bash" in command or "/bin/sh" in command):
-                        if "/usr/" not in command:
-                            threat_level = "MEDIUM"; color = "#f39c12"; reason = "Root running script from non-standard location"
-                    if threat_level:
-                        suspicious_count += 1
+            
+            # Clear old results
+            child = proc_listbox.get_first_child()
+            while child:
+                next_child = child.get_next_sibling()
+                if child != proc_header:
+                    proc_listbox.remove(child)
+                child = next_child
+                
+            def do_scan():
+                results = []
+                try:
+                    result = subprocess.run(["ps", "aux", "--no-headers"], capture_output=True, text=True, timeout=5)
+                    for proc in result.stdout.strip().split('\\n'):
+                        if not proc.strip(): continue
+                        parts = proc.split(None, 10)
+                        if len(parts) < 11: continue
+                        user, pid, cpu, mem, vsz, rss, tty, stat, start, time_cmd = parts[:10]
+                        command = parts[10]
+                        if command.startswith("["): continue
+                        if any(x in command.lower() for x in ["/usr/lib/sddm/", "/opt/firefox", "betterbird", "thunderbird"]): continue
+                        
+                        threat_level, reason, color = None, "", ""
+                        if "/tmp/" in command or command.startswith("./"): threat_level, color, reason = "CRITICAL", "#e74c3c", "Running from /tmp or current directory"
+                        elif "/dev/shm/" in command: threat_level, color, reason = "CRITICAL", "#e74c3c", "Running from /dev/shm"
+                        elif "/var/tmp/" in command: threat_level, color, reason = "HIGH", "#e67e22", "Running from /var/tmp"
+                        elif user == "root" and any(x in command for x in ["python", "bash", "/bin/sh"]) and "/usr/" not in command:
+                            threat_level, color, reason = "MEDIUM", "#f39c12", "Root running script from non-standard location"
+                        
+                        if threat_level: results.append((pid, user, command, threat_level, reason, color))
+                except Exception as e:
+                    results.append(("Error", "Error", str(e), "ERROR", "Scan failed", "#e74c3c"))
+                GLib.idle_add(update_proc_ui, results, button)
+
+            def update_proc_ui(results, button):
+                if not results:
+                    row = Gtk.ListBoxRow()
+                    row.set_margin_top(20)
+                    row.set_child(Gtk.Label(label="✅ No anomalous processes detected. All clear!", xalign=0))
+                    proc_listbox.append(row)
+                else:
+                    for pid, user, command, threat_level, reason, color in results:
                         row = Gtk.ListBoxRow()
                         row.set_margin_top(2); row.set_margin_bottom(2); row.set_margin_start(10); row.set_margin_end(10)
                         row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-                        header_markup = f"<span foreground='{color}' weight='bold'>[{threat_level}]</span> PID: {pid} | User: {user}"
-                        header_label = Gtk.Label(label=header_markup, xalign=0, use_markup=True)
-                        cmd_markup = f"<span foreground='#bdc3c7'>{command}</span>"
-                        cmd_label = Gtk.Label(label=cmd_markup, xalign=0, use_markup=True)
-                        cmd_label.set_max_width_chars(80)
-                        cmd_label.set_wrap(True)
-                        reason_markup = f"<span foreground='{color}' style='italic'>{reason}</span>"
-                        reason_label = Gtk.Label(label=reason_markup, xalign=0, use_markup=True)
-                        row_box.append(header_label); row_box.append(cmd_label); row_box.append(reason_label)
+                        row_box.append(Gtk.Label(label=f"<span foreground='{color}' weight='bold'>[{threat_level}]</span> PID: {pid} | User: {user}", xalign=0, use_markup=True))
+                        row_box.append(Gtk.Label(label=f"<span foreground='#bdc3c7'>{command}</span>", xalign=0, use_markup=True, max_width_chars=80, wrap=True))
+                        row_box.append(Gtk.Label(label=f"<span foreground='{color}' style='italic'>{reason}</span>", xalign=0, use_markup=True))
                         row.set_child(row_box)
                         proc_listbox.append(row)
-                if suspicious_count == 0:
-                    safe_label = Gtk.Label(label="✅ No anomalous processes detected. All clear!")
-                    safe_label.set_margin_top(20)
-                    proc_listbox.append(safe_label)
-            except Exception as e:
-                err_label = Gtk.Label(label=f"Process scan failed: {str(e)}")
-                proc_listbox.append(err_label)
+                button.set_label("Rescan Processes")
+                button.set_sensitive(True)
+                
+            threading.Thread(target=do_scan, daemon=True).start()
 
         scan_btn = Gtk.Button(label="Start Process Scan")
         scan_btn.connect("clicked", run_proc_scan)

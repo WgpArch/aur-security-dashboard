@@ -215,7 +215,7 @@ class SecurityApp(Adw.Application):
         header_integrity.set_margin_bottom(5)
         sys_listbox.append(header_integrity)
         
-        # Map critical binaries to their owning packages for quick verification
+        # Map critical binaries to owning packages for integrity verification
         critical_files = {
             "/usr/bin/bash": "bash", 
             "/usr/bin/ls": "coreutils", 
@@ -429,7 +429,7 @@ class SecurityApp(Adw.Application):
                 button.set_label("Rescan Auth Monitor")
                 button.set_sensitive(True)
                 
-            # Run heavy scanning in a background thread to keep UI responsive
+            # Offload blocking I/O to daemon thread to prevent main loop starvation
             threading.Thread(target=do_scan, daemon=True).start()
 
         scan_btn = Gtk.Button(label="Start Auth Scan")

@@ -1,5 +1,7 @@
 # 🛡️ Arch Security Dashboard
 
+[![Buy Me a Coffee](https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=☕&slug=wgparch&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff)](https://www.buymeacoffee.com/wgparch)
+
 A forensic-grade, local Security Information and Event Management (SIEM) dashboard built specifically for Arch Linux. 
 
 Unlike traditional security scripts that just run and dump text, this tool provides a beautiful, interactive GTK4 GUI to monitor system integrity, hunt anomalies, and audit your security posture in real-time.

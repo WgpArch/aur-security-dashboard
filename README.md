@@ -4,7 +4,13 @@ A forensic-grade, local Security Information and Event Management (SIEM) dashboa
 
 Unlike traditional security scripts that just run and dump text, this tool provides a beautiful, interactive GTK4 GUI to monitor system integrity, hunt anomalies, and audit your security posture in real-time.
 
-**⚠️ Current Threat Landscape:** The Arch User Repository (AUR) has experienced a notable increase in supply chain attacks, compromised maintainer accounts, and malicious package submissions since August of last year, with active incidents reported as recently as last week. This dashboard is designed to provide immediate, local visibility and defense against these evolving, real-world threats.
+## ⚠️ Current Threat Landscape
+
+The Arch User Repository (AUR) has recently experienced a notable increase in supply chain attacks, compromised maintainer accounts, and malicious package submissions. Most notably, the **"Atomic Arch"** campaign recently targeted over 1,500 AUR packages by hijacking orphaned repositories to inject rootkit-like malware (leveraging eBPF for persistence, process hiding, and credential harvesting).
+
+**This dashboard is designed to provide immediate, local visibility and defense against these evolving, real-world threats.** 
+
+By running entirely locally and auditing your system's AUR packages, SUID binaries, active network connections, and system integrity, it empowers you to verify your own system's security posture without relying on external, potentially compromised tools.
 
 ![Dashboard Screenshot](docs/screenshot-1.png)
 

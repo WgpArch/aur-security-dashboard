@@ -1,20 +1,54 @@
 #!/usr/bin/env python3
-import sys, subprocess, gi, threading
+"""
+AUR Security Dashboard
+A forensic-grade, local SIEM dashboard for Arch Linux.
+
+Maintainer: WgpArch
+Purpose: Monitor system integrity, audit AUR packages, and hunt anomalies.
+"""
+
+import sys
+import subprocess
+import threading
+import platform
+import datetime
+import os
+import re
+
+import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, GLib, Adw
 
-def get_aur_packages():
+
+def fetch_aur_packages():
+    """
+    Queries pacman for foreign (AUR) packages.
+    Returns a list of dictionaries with 'name' and 'version'.
+    """
     try:
-        result = subprocess.run(["pacman", "-Qm"], capture_output=True, text=True, check=True)
-        packages = []
-        for line in result.stdout.strip().split("\n"):
+        # -Qm lists packages not in the sync databases (i.e., AUR packages)
+        pacman_output = subprocess.run(
+            ["pacman", "-Qm"], 
+            capture_output=True, 
+            text=True, 
+            check=True
+        )
+        
+        pkg_list = []
+        for line in pacman_output.stdout.strip().split("\n"):
             if line:
+                # Split only on the first space to handle versions with spaces
                 name, version = line.split(" ", 1)
-                packages.append({"name": name, "version": version})
-        return packages
+                pkg_list.append({"name": name, "version": version})
+        return pkg_list
+        
+    except subprocess.CalledProcessError:
+        # Return empty list if no AUR packages are installed or command fails
+        return []
     except Exception:
         return []
+
 
 class SecurityApp(Adw.Application):
     def __init__(self, **kwargs):
@@ -22,16 +56,21 @@ class SecurityApp(Adw.Application):
         self.connect("activate", self.on_activate)
 
     def on_activate(self, app):
+        # Main window setup
         self.win = Gtk.ApplicationWindow(application=app)
         self.win.set_title("AUR Security Dashboard")
         self.win.set_default_size(1400, 800)
         self.win.set_size_request(1200, 700)
 
+        # Vertical layout for the whole window
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        
+        # Header bar with tab switcher
         header = Adw.HeaderBar()
         header.set_show_end_title_buttons(True)
         main_box.append(header)
 
+        # Stack for tabbed interface
         self.stack = Gtk.Stack()
         self.stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
         self.stack.set_transition_duration(300)
@@ -39,27 +78,33 @@ class SecurityApp(Adw.Application):
         self.stack.set_margin_end(10)
         self.stack.set_margin_bottom(10)
 
+        # Connect the stack switcher to the header
         stack_switcher = Gtk.StackSwitcher()
         stack_switcher.set_stack(self.stack)
         stack_switcher.set_margin_bottom(10)
         header.set_title_widget(stack_switcher)
 
+        # =========================================================================
         # TAB 1: AUR PACKAGES
+        # =========================================================================
         aur_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         aur_box.set_spacing(10)
         aur_box.set_vexpand(True)
         aur_box.set_hexpand(True)
+        
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_vexpand(True)
         scrolled.set_hexpand(True)
+        
         listbox = Gtk.ListBox()
         listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        aur_packages = get_aur_packages()
+        
+        aur_packages = fetch_aur_packages()
         if not aur_packages:
-            label = Gtk.Label(label="No AUR packages found.")
-            label.set_margin_top(20)
-            listbox.append(label)
+            empty_label = Gtk.Label(label="No AUR packages found on this system.")
+            empty_label.set_margin_top(20)
+            listbox.append(empty_label)
         else:
             for pkg in aur_packages:
                 row = Gtk.ListBoxRow()
@@ -67,34 +112,45 @@ class SecurityApp(Adw.Application):
                 row.set_margin_bottom(2)
                 row.set_margin_start(10)
                 row.set_margin_end(10)
+                
                 row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                
                 name_label = Gtk.Label(label=pkg["name"], xalign=0)
                 name_label.set_hexpand(False)
+                
                 version_label = Gtk.Label(label=pkg["version"], xalign=1)
+                
                 row_box.append(name_label)
                 row_box.append(version_label)
                 row.set_child(row_box)
                 listbox.append(row)
+                
         scrolled.set_child(listbox)
         aur_box.append(scrolled)
         self.stack.add_titled(aur_box, "aur", "AUR Packages")
 
+        # =========================================================================
         # TAB 2: NETWORK MONITOR
+        # =========================================================================
         net_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         net_box.set_spacing(10)
+        
         net_scrolled = Gtk.ScrolledWindow()
         net_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         net_scrolled.set_vexpand(True)
         net_scrolled.set_hexpand(True)
+        
         net_listbox = Gtk.ListBox()
         net_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        
         try:
             import psutil
             connections = psutil.net_connections(kind="inet")
+            
             if not connections:
-                label = Gtk.Label(label="No active network connections.")
-                label.set_margin_top(20)
-                net_listbox.append(label)
+                empty_label = Gtk.Label(label="No active network connections detected.")
+                empty_label.set_margin_top(20)
+                net_listbox.append(empty_label)
             else:
                 for conn in connections:
                     row = Gtk.ListBoxRow()
@@ -102,79 +158,116 @@ class SecurityApp(Adw.Application):
                     row.set_margin_bottom(2)
                     row.set_margin_start(10)
                     row.set_margin_end(10)
+                    
                     row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-                    proto_label = Gtk.Label(label=conn.type.name if hasattr(conn.type, "name") else str(conn.type), xalign=0)
+                    
+                    proto_label = Gtk.Label(
+                        label=conn.type.name if hasattr(conn.type, "name") else str(conn.type), 
+                        xalign=0
+                    )
                     proto_label.set_width_chars(8)
+                    
                     local_addr = f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else "N/A"
                     local_label = Gtk.Label(label=local_addr, xalign=0)
                     local_label.set_hexpand(False)
+                    
                     remote_addr = f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else "LISTENING"
                     remote_label = Gtk.Label(label=remote_addr, xalign=1)
+                    
                     status_label = Gtk.Label(label=conn.status, xalign=1)
                     status_label.set_width_chars(12)
+                    
                     row_box.append(proto_label)
                     row_box.append(local_label)
                     row_box.append(remote_label)
                     row.set_child(row_box)
                     net_listbox.append(row)
+                    
         except ImportError:
-            label = Gtk.Label(label="psutil not installed")
-            label.set_margin_top(20)
-            net_listbox.append(label)
+            warning_label = Gtk.Label(label="Warning: 'psutil' module not installed.")
+            warning_label.set_margin_top(20)
+            net_listbox.append(warning_label)
         except Exception as e:
-            label = Gtk.Label(label=f"Error: {str(e)}")
-            label.set_margin_top(20)
-            net_listbox.append(label)
+            error_label = Gtk.Label(label=f"Network scan error: {str(e)}")
+            error_label.set_margin_top(20)
+            net_listbox.append(error_label)
+            
         net_scrolled.set_child(net_listbox)
         net_box.append(net_scrolled)
         self.stack.add_titled(net_box, "network", "Network")
 
+        # =========================================================================
         # TAB 3: SYSTEM INTEGRITY
+        # =========================================================================
         sys_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         sys_box.set_spacing(10)
+        
         sys_scrolled = Gtk.ScrolledWindow()
         sys_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         sys_scrolled.set_vexpand(True)
         sys_scrolled.set_hexpand(True)
+        
         sys_listbox = Gtk.ListBox()
         sys_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        # === SECTION 3: CRITICAL FILE INTEGRITY ===
+        
         header_integrity = Gtk.Label(label="Critical File Integrity Check:")
         header_integrity.set_xalign(0)
         header_integrity.set_margin_bottom(5)
         sys_listbox.append(header_integrity)
-        critical_files = {"/usr/bin/bash": "bash", "/usr/bin/ls": "coreutils", "/usr/bin/pacman": "pacman", "/usr/bin/systemd": "systemd"}
+        
+        # Map critical binaries to their owning packages for quick verification
+        critical_files = {
+            "/usr/bin/bash": "bash", 
+            "/usr/bin/ls": "coreutils", 
+            "/usr/bin/pacman": "pacman", 
+            "/usr/bin/systemd": "systemd"
+        }
+        
         for filepath, pkg_name in critical_files.items():
             row = Gtk.ListBoxRow()
             row.set_margin_top(2)
             row.set_margin_bottom(2)
             row.set_margin_start(10)
             row.set_margin_end(10)
+            
             row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-            file_label = Gtk.Label(label=filepath, xalign=0, ellipsize=3)  # Pango.EllipsizeMode.END
-            pkg_result = subprocess.run(["pacman", "-Qk", pkg_name], capture_output=True, text=True, timeout=5)
+            file_label = Gtk.Label(label=filepath, xalign=0, ellipsize=3)
+            
+            # Run pacman -Qk to verify package files
+            pkg_result = subprocess.run(
+                ["pacman", "-Qk", pkg_name], 
+                capture_output=True, 
+                text=True, 
+                timeout=5
+            )
+            
             if pkg_result.returncode == 0 and "0 missing files" in pkg_result.stdout:
-                status = " Intact"
+                status = "Intact"
             elif pkg_result.returncode != 0:
-                status = " Modified/Missing"
+                status = "Modified/Missing"
             else:
-                status = " Check Failed"
+                status = "Check Failed"
+                
             status_label = Gtk.Label(label=status, xalign=1)
             row_box.append(file_label)
             row.set_child(row_box)
             sys_listbox.append(row)
+            
         sys_scrolled.set_child(sys_listbox)
         sys_box.append(sys_scrolled)
         self.stack.add_titled(sys_box, "system", "System Integrity")
 
-
-        # TAB 5: SUID/SGID SCANNER
+        # =========================================================================
+        # TAB 4: SUID/SGID SCANNER
+        # =========================================================================
         suid_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         suid_box.set_spacing(10)
+        
         suid_scrolled = Gtk.ScrolledWindow()
         suid_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         suid_scrolled.set_vexpand(True)
         suid_scrolled.set_hexpand(True)
+        
         suid_listbox = Gtk.ListBox()
         suid_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
 
@@ -183,7 +276,7 @@ class SecurityApp(Adw.Application):
         suid_header.set_margin_bottom(5)
         suid_listbox.append(suid_header)
 
-        # Standard Arch Linux SUID/SGID whitelist
+        # Standard Arch Linux SUID/SGID whitelist (safe binaries)
         safe_suid_binaries = {
             "/usr/bin/sudo", "/usr/bin/ping", "/usr/bin/passwd", "/usr/bin/su",
             "/usr/bin/mount", "/usr/bin/umount", "/usr/bin/newgrp", "/usr/bin/chsh",
@@ -193,23 +286,23 @@ class SecurityApp(Adw.Application):
             "/usr/lib/Xorg.wrap", "/usr/bin/Xorg.wrap", "/usr/bin/kmscon",
             "/usr/bin/ntfs-3g", "/usr/bin/expiry", "/usr/bin/chage",
             "/usr/lib/dbus-daemon-launch-helper",
-            # Browser sandboxes
             "/opt/vivaldi/vivaldi-sandbox", "/usr/lib/electron43/chrome-sandbox",
-            # Additional system binaries
             "/usr/bin/ksu", "/usr/bin/unix_chkpwd", "/usr/bin/wall", "/usr/bin/write",
             "/usr/lib/ssh/ssh-keysign"
         }
 
         try:
-            # /6000 matches any file with SUID (4000) or SGID (2000) bits set
-            result = subprocess.run(
-                ["find", "/", "-not", "-path", "/proc/*", "-not", "-path", "/sys/*", "-not", "-path", "/dev/*", "-not", "-path", "/run/*", "-perm", "/6000", "-type", "f"],
-                capture_output=True, text=True, timeout=45
-            )
-            suid_files = [f.strip() for f in result.stdout.split('\n') if f.strip()]
+            # Find files with SUID (4000) or SGID (2000) bits set, excluding virtual filesystems
+            find_cmd = [
+                "find", "/", "-not", "-path", "/proc/*", "-not", "-path", "/sys/*", 
+                "-not", "-path", "/dev/*", "-not", "-path", "/run/*", "-perm", "/6000", "-type", "f"
+            ]
+            scan_result = subprocess.run(find_cmd, capture_output=True, text=True, timeout=45)
+            suid_files = [f.strip() for f in scan_result.stdout.split('\n') if f.strip()]
+            
         except subprocess.TimeoutExpired:
             suid_files = []
-            err_label = Gtk.Label(label="Scan timed out (took >15s). Try running as root for full scan.")
+            err_label = Gtk.Label(label="Scan timed out (>45s). Try running as root for a full scan.")
             suid_listbox.append(err_label)
         except Exception as e:
             suid_files = []
@@ -223,20 +316,23 @@ class SecurityApp(Adw.Application):
                 row.set_margin_bottom(2)
                 row.set_margin_start(10)
                 row.set_margin_end(10)
+                
                 row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-
-                file_label = Gtk.Label(label=filepath, xalign=0, ellipsize=3)  # Pango.EllipsizeMode.END
+                file_label = Gtk.Label(label=filepath, xalign=0, ellipsize=3)
 
                 if filepath in safe_suid_binaries:
                     status_markup = "<span foreground='#2ecc71'>Safe</span>"
                 else:
                     status_markup = "<span foreground='#e74c3c' weight='bold'>SUSPICIOUS</span>"
 
-                status_label = Gtk.Label(label=status_markup, xalign=1, use_markup=True, ellipsize=3, max_width_chars=30)
+                status_label = Gtk.Label(
+                    label=status_markup, xalign=1, use_markup=True, ellipsize=3, max_width_chars=30
+                )
                 row_box.append(file_label)
                 row.set_child(row_box)
                 suid_listbox.append(row)
-        elif not suid_files and "Scan timed out" not in locals() and "Scan failed" not in locals():
+                
+        elif not suid_files and "err_label" not in locals():
             no_label = Gtk.Label(label="No SUID/SGID files found.")
             suid_listbox.append(no_label)
 
@@ -244,13 +340,17 @@ class SecurityApp(Adw.Application):
         suid_box.append(suid_scrolled)
         self.stack.add_titled(suid_box, "suid", "SUID Scanner")
 
-                # TAB 6: AUTH & BRUTE-FORCE MONITOR
+        # =========================================================================
+        # TAB 5: AUTH & BRUTE-FORCE MONITOR
+        # =========================================================================
         auth_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         auth_box.set_spacing(10)
+        
         auth_scrolled = Gtk.ScrolledWindow()
         auth_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         auth_scrolled.set_vexpand(True)
         auth_scrolled.set_hexpand(True)
+        
         auth_listbox = Gtk.ListBox()
         auth_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
 
@@ -263,7 +363,7 @@ class SecurityApp(Adw.Application):
             button.set_sensitive(False)
             button.set_label("Scanning...")
             
-            # Clear old results
+            # Clear previous results, keeping only the header
             child = auth_listbox.get_first_child()
             while child:
                 next_child = child.get_next_sibling()
@@ -274,40 +374,62 @@ class SecurityApp(Adw.Application):
             def do_scan():
                 results = []
                 try:
-                    log_result = subprocess.run(["journalctl", "--since", "24 hours ago", "-g", "Failed password|Invalid user|sudo:.*COMMAND|session opened", "--no-pager", "-q"], capture_output=True, text=True, timeout=10)
-                    logs = log_result.stdout.strip().split('\\n')
+                    # Query journalctl for auth-related events
+                    log_result = subprocess.run(
+                        ["journalctl", "--since", "24 hours ago", "-g", "Failed password|Invalid user|sudo:.*COMMAND|session opened", "--no-pager", "-q"], 
+                        capture_output=True, text=True, timeout=10
+                    )
+                    logs = log_result.stdout.strip().split('\n')
+                    
                     if not logs or (len(logs) == 1 and not logs[0].strip()):
                         results.append(("NO_EVENTS", "No authentication events in the last 24 hours.", "#2ecc71"))
                     else:
+                        # Process the last 50 events to avoid UI lag
                         for log in logs[-50:]:
                             if not log.strip(): continue
                             parts = log.split(' ', 3)
                             time_str = f"{parts[0]} {parts[1]}" if len(parts) > 2 else "Unknown Time"
                             message = parts[3] if len(parts) > 3 else log
-                            if "Failed" in message or "Invalid" in message: color, event_type = "#e74c3c", "FAILED LOGIN"
-                            elif "sudo" in message: color, event_type = "#f39c12", "SUDO USAGE"
-                            else: color, event_type = "#2ecc71", "SUCCESS"
+                            
+                            if "Failed" in message or "Invalid" in message: 
+                                color, event_type = "#e74c3c", "FAILED LOGIN"
+                            elif "sudo" in message: 
+                                color, event_type = "#f39c12", "SUDO USAGE"
+                            else: 
+                                color, event_type = "#2ecc71", "SUCCESS"
+                                
                             results.append((time_str, message, event_type, color))
+                            
                 except Exception as e:
                     results.append(("Error", str(e), "ERROR", "#e74c3c"))
+                    
+                # Update UI on the main thread
                 GLib.idle_add(update_auth_ui, results, button)
 
             def update_auth_ui(results, button):
                 for res in results:
                     row = Gtk.ListBoxRow()
-                    row.set_margin_top(2); row.set_margin_bottom(2); row.set_margin_start(10); row.set_margin_end(10)
+                    row.set_margin_top(2)
+                    row.set_margin_bottom(2)
+                    row.set_margin_start(10)
+                    row.set_margin_end(10)
+                    
                     if res[0] == "NO_EVENTS":
                         row.set_child(Gtk.Label(label=res[1], xalign=0, margin_top=20))
                     else:
                         row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
                         row_box.append(Gtk.Label(label=res[0], xalign=0, margin_bottom=2))
+                        
                         msg_markup = f"<span foreground='{res[3]}' weight='bold'>[{res[2]}]</span> {res[1]}"
                         row_box.append(Gtk.Label(label=msg_markup, xalign=0, use_markup=True, max_width_chars=80, wrap=True))
                         row.set_child(row_box)
+                        
                     auth_listbox.append(row)
+                    
                 button.set_label("Rescan Auth Monitor")
                 button.set_sensitive(True)
                 
+            # Run heavy scanning in a background thread to keep UI responsive
             threading.Thread(target=do_scan, daemon=True).start()
 
         scan_btn = Gtk.Button(label="Start Auth Scan")
@@ -317,13 +439,17 @@ class SecurityApp(Adw.Application):
         auth_box.append(auth_scrolled)
         self.stack.add_titled(auth_box, "auth", "Auth Monitor")
 
-                # TAB 7: ANOMALOUS PROCESS HUNTER
+        # =========================================================================
+        # TAB 6: ANOMALOUS PROCESS HUNTER
+        # =========================================================================
         proc_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         proc_box.set_spacing(10)
+        
         proc_scrolled = Gtk.ScrolledWindow()
         proc_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         proc_scrolled.set_vexpand(True)
         proc_scrolled.set_hexpand(True)
+        
         proc_listbox = Gtk.ListBox()
         proc_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
 
@@ -336,7 +462,6 @@ class SecurityApp(Adw.Application):
             button.set_sensitive(False)
             button.set_label("Scanning...")
             
-            # Clear old results
             child = proc_listbox.get_first_child()
             while child:
                 next_child = child.get_next_sibling()
@@ -347,26 +472,36 @@ class SecurityApp(Adw.Application):
             def do_scan():
                 results = []
                 try:
-                    result = subprocess.run(["ps", "aux", "--no-headers"], capture_output=True, text=True, timeout=5)
-                    for proc in result.stdout.strip().split('\\n'):
+                    ps_result = subprocess.run(["ps", "aux", "--no-headers"], capture_output=True, text=True, timeout=5)
+                    for proc in ps_result.stdout.strip().split('\n'):
                         if not proc.strip(): continue
                         parts = proc.split(None, 10)
                         if len(parts) < 11: continue
+                        
                         user, pid, cpu, mem, vsz, rss, tty, stat, start, time_cmd = parts[:10]
                         command = parts[10]
+                        
+                        # Skip kernel threads and known safe GUI apps
                         if command.startswith("["): continue
                         if any(x in command.lower() for x in ["/usr/lib/sddm/", "/opt/firefox", "betterbird", "thunderbird"]): continue
                         
                         threat_level, reason, color = None, "", ""
-                        if "/tmp/" in command or command.startswith("./"): threat_level, color, reason = "CRITICAL", "#e74c3c", "Running from /tmp or current directory"
-                        elif "/dev/shm/" in command: threat_level, color, reason = "CRITICAL", "#e74c3c", "Running from /dev/shm"
-                        elif "/var/tmp/" in command: threat_level, color, reason = "HIGH", "#e67e22", "Running from /var/tmp"
+                        
+                        if "/tmp/" in command or command.startswith("./"): 
+                            threat_level, color, reason = "CRITICAL", "#e74c3c", "Running from /tmp or current directory"
+                        elif "/dev/shm/" in command: 
+                            threat_level, color, reason = "CRITICAL", "#e74c3c", "Running from /dev/shm"
+                        elif "/var/tmp/" in command: 
+                            threat_level, color, reason = "HIGH", "#e67e22", "Running from /var/tmp"
                         elif user == "root" and any(x in command for x in ["python", "bash", "/bin/sh"]) and "/usr/" not in command:
                             threat_level, color, reason = "MEDIUM", "#f39c12", "Root running script from non-standard location"
                         
-                        if threat_level: results.append((pid, user, command, threat_level, reason, color))
+                        if threat_level: 
+                            results.append((pid, user, command, threat_level, reason, color))
+                            
                 except Exception as e:
                     results.append(("Error", "Error", str(e), "ERROR", "Scan failed", "#e74c3c"))
+                    
                 GLib.idle_add(update_proc_ui, results, button)
 
             def update_proc_ui(results, button):
@@ -378,13 +513,18 @@ class SecurityApp(Adw.Application):
                 else:
                     for pid, user, command, threat_level, reason, color in results:
                         row = Gtk.ListBoxRow()
-                        row.set_margin_top(2); row.set_margin_bottom(2); row.set_margin_start(10); row.set_margin_end(10)
+                        row.set_margin_top(2)
+                        row.set_margin_bottom(2)
+                        row.set_margin_start(10)
+                        row.set_margin_end(10)
+                        
                         row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
                         row_box.append(Gtk.Label(label=f"<span foreground='{color}' weight='bold'>[{threat_level}]</span> PID: {pid} | User: {user}", xalign=0, use_markup=True))
                         row_box.append(Gtk.Label(label=f"<span foreground='#bdc3c7'>{command}</span>", xalign=0, use_markup=True, max_width_chars=80, wrap=True))
                         row_box.append(Gtk.Label(label=f"<span foreground='{color}' style='italic'>{reason}</span>", xalign=0, use_markup=True))
                         row.set_child(row_box)
                         proc_listbox.append(row)
+                        
                 button.set_label("Rescan Processes")
                 button.set_sensitive(True)
                 
@@ -397,13 +537,17 @@ class SecurityApp(Adw.Application):
         proc_box.append(proc_scrolled)
         self.stack.add_titled(proc_box, "processes", "Process Hunter")
 
-                                # TAB 8: SYSTEMD SERVICE AUDITOR
+        # =========================================================================
+        # TAB 7: SYSTEMD SERVICE AUDITOR
+        # =========================================================================
         systemd_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         systemd_box.set_spacing(10)
+        
         systemd_scrolled = Gtk.ScrolledWindow()
         systemd_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         systemd_scrolled.set_vexpand(True)
         systemd_scrolled.set_hexpand(True)
+        
         systemd_listbox = Gtk.ListBox()
         systemd_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
 
@@ -419,20 +563,27 @@ class SecurityApp(Adw.Application):
             def do_scan():
                 results = []
                 try:
-                    result = subprocess.run(["systemctl", "list-units", "--type=service", "--all", "--no-pager", "--no-legend"], capture_output=True, text=True, timeout=10)
-                    services = result.stdout.strip().split('\n')
-                    suspicious_count = 0
+                    svc_result = subprocess.run(
+                        ["systemctl", "list-units", "--type=service", "--all", "--no-pager", "--no-legend"], 
+                        capture_output=True, text=True, timeout=10
+                    )
+                    services = svc_result.stdout.strip().split('\n')
+                    
                     for svc in services:
                         if not svc.strip(): continue
                         parts = svc.split()
                         if len(parts) < 4: continue
-                        service_name = parts[0]; active_state = parts[2]
+                        
+                        service_name = parts[0]
+                        active_state = parts2
+                        
+                        # Flag failed services or services running from user home directories
                         if active_state == "failed" or "/home/" in svc:
-                            suspicious_count += 1
                             threat_level = "FAILED" if active_state == "failed" else "SUSPICIOUS"
                             color = "#e74c3c" if active_state == "failed" else "#f39c12"
                             reason = "Service has failed" if active_state == "failed" else "Runs from /home"
                             results.append((service_name, active_state, threat_level, reason, color))
+                            
                 except Exception as e:
                     results.append(("Error", str(e), "ERROR", "Scan failed", "#e74c3c"))
                 
@@ -449,7 +600,6 @@ class SecurityApp(Adw.Application):
                     systemd_listbox.remove(child)
                 child = next_child
             
-            # If no suspicious services found, show all-clear
             if not results:
                 row = Gtk.ListBoxRow()
                 row.set_margin_top(40)
@@ -459,10 +609,13 @@ class SecurityApp(Adw.Application):
                 row.set_child(safe_label)
                 systemd_listbox.append(row)
             else:
-                # Show suspicious services
                 for name, state, level, reason, color in results:
                     row = Gtk.ListBoxRow()
-                    row.set_margin_top(2); row.set_margin_bottom(2); row.set_margin_start(10); row.set_margin_end(10)
+                    row.set_margin_top(2)
+                    row.set_margin_bottom(2)
+                    row.set_margin_start(10)
+                    row.set_margin_end(10)
+                    
                     row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
                     header_markup = f"<span foreground='{color}' weight='bold'>[{level}]</span> {name}"
                     header_label = Gtk.Label(label=header_markup, xalign=0, use_markup=True)
@@ -480,13 +633,17 @@ class SecurityApp(Adw.Application):
         systemd_box.append(systemd_scrolled)
         self.stack.add_titled(systemd_box, "systemd", "Service Auditor")
 
-# TAB 9: DEEP CODE INSPECTOR
+        # =========================================================================
+        # TAB 8: DEEP CODE INSPECTOR
+        # =========================================================================
         code_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         code_box.set_spacing(10)
+        
         code_scrolled = Gtk.ScrolledWindow()
         code_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         code_scrolled.set_vexpand(True)
         code_scrolled.set_hexpand(True)
+        
         code_listbox = Gtk.ListBox()
         code_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
 
@@ -501,25 +658,37 @@ class SecurityApp(Adw.Application):
             
             def do_scan():
                 results = []
-                import re
                 try:
                     aur_result = subprocess.run(["pacman", "-Qm"], capture_output=True, text=True, timeout=5)
                     aur_packages = [line.split()[0] for line in aur_result.stdout.strip().split('\n') if line.strip()]
-                    critical_patterns = [(r'\beval\b', "Uses eval()"), (r'base64\s+-d', "Decodes base64"), (r'\|\s*bash', "Pipes to bash")]
-                    for pkg_name in aur_packages[:10]:
+                    
+                    # Patterns that might indicate malicious or AI-generated sloppy code
+                    critical_patterns = [
+                        (r'\beval\b', "Uses eval()"), 
+                        (r'base64\s+-d', "Decodes base64"), 
+                        (r'\|\s*bash', "Pipes to bash")
+                    ]
+                    
+                    for pkg_name in aur_packages[:10]: # Limit to first 10 to prevent timeout
                         try:
-                            fetch_result = subprocess.run(["curl", "-s", f"https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={pkg_name}"], capture_output=True, text=True, timeout=5)
+                            fetch_result = subprocess.run(
+                                ["curl", "-s", f"https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={pkg_name}"], 
+                                capture_output=True, text=True, timeout=5
+                            )
                             if fetch_result.returncode != 0 or "404" in fetch_result.stdout:
                                 results.append((pkg_name, "[SKIPPED] Could not fetch", "#95a5a6"))
                                 continue
+                                
                             content_pkg = fetch_result.stdout
                             threats = [desc for pattern, desc in critical_patterns if re.search(pattern, content_pkg)]
+                            
                             if threats:
                                 results.append((pkg_name, f"[CRITICAL] {', '.join(threats)}", "#e74c3c"))
                             else:
                                 results.append((pkg_name, "[CLEAN] No suspicious patterns", "#2ecc71"))
-                        except:
+                        except Exception:
                             results.append((pkg_name, "[ERROR] Fetch failed", "#e74c3c"))
+                            
                 except Exception as e:
                     results.append(("Error", str(e), "#e74c3c"))
                 
@@ -537,7 +706,11 @@ class SecurityApp(Adw.Application):
                 
             for pkg, status, color in results:
                 row = Gtk.ListBoxRow()
-                row.set_margin_top(2); row.set_margin_bottom(2); row.set_margin_start(10); row.set_margin_end(10)
+                row.set_margin_top(2)
+                row.set_margin_bottom(2)
+                row.set_margin_start(10)
+                row.set_margin_end(10)
+                
                 row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
                 
                 pkg_label = Gtk.Label(label=pkg, xalign=0)
@@ -561,15 +734,17 @@ class SecurityApp(Adw.Application):
         code_box.append(code_scrolled)
         self.stack.add_titled(code_box, "code", "Code Inspector")
 
-        
-
-                                # TAB 10: SYSTEM HARDENING POSTURE
+        # =========================================================================
+        # TAB 9: SYSTEM HARDENING POSTURE
+        # =========================================================================
         hardening_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         hardening_box.set_spacing(10)
+        
         hardening_scrolled = Gtk.ScrolledWindow()
         hardening_scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         hardening_scrolled.set_vexpand(True)
         hardening_scrolled.set_hexpand(True)
+        
         hardening_listbox = Gtk.ListBox()
         hardening_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
 
@@ -580,29 +755,34 @@ class SecurityApp(Adw.Application):
 
         def check_hardening():
             results = []
+            
             def read_file(path):
                 try:
                     with open(path, 'r') as f:
                         return f.read().strip()
-                except:
+                except Exception:
                     return None
             
+            # Check Mandatory Access Control
             lsm = read_file('/sys/kernel/security/lsm')
             if lsm and any(m in lsm for m in ['apparmor', 'selinux', 'tomoyo']):
                 results.append(("MAC System", "Active", "#2ecc71"))
             else:
                 results.append(("MAC System", "Inactive", "#f39c12"))
             
+            # Check kernel pointer restriction
             kptr = read_file('/proc/sys/kernel/kptr_restrict')
             if kptr == '2': results.append(("Kernel Pointer Restriction", "Hardened", "#2ecc71"))
             elif kptr == '1': results.append(("Kernel Pointer Restriction", "Default", "#f39c12"))
             else: results.append(("Kernel Pointer Restriction", "Vulnerable", "#e74c3c"))
             
+            # Check ptrace scope
             ptrace = read_file('/proc/sys/kernel/yama/ptrace_scope')
             if ptrace in ['2', '3']: results.append(("ptrace Scope", "Hardened", "#2ecc71"))
             elif ptrace == '1': results.append(("ptrace Scope", "Default", "#f39c12"))
             else: results.append(("ptrace Scope", "Vulnerable", "#e74c3c"))
             
+            # Check BPF JIT hardening
             bpf = read_file('/proc/sys/net/core/bpf_jit_harden')
             if bpf == '2': results.append(("BPF JIT Hardening", "Hardened", "#2ecc71"))
             elif bpf == '1': results.append(("BPF JIT Hardening", "Default", "#f39c12"))
@@ -611,7 +791,6 @@ class SecurityApp(Adw.Application):
             return results
 
         def display_results(results):
-            # Clear existing results (keep header and button)
             child = hardening_listbox.get_first_child()
             while child:
                 next_child = child.get_next_sibling()
@@ -619,7 +798,6 @@ class SecurityApp(Adw.Application):
                     hardening_listbox.remove(child)
                 child = next_child
             
-            # Add new results
             for name, status, color in results:
                 row = Gtk.ListBoxRow()
                 row.set_margin_top(5)
@@ -655,8 +833,9 @@ class SecurityApp(Adw.Application):
         hardening_box.append(hardening_scrolled)
         self.stack.add_titled(hardening_box, "hardening", "Hardening Posture")
 
-
-# TAB 4: SETTINGS
+        # =========================================================================
+        # TAB 10: SETTINGS
+        # =========================================================================
         settings_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         settings_box.set_spacing(15)
         settings_box.set_margin_top(20)
@@ -668,19 +847,20 @@ class SecurityApp(Adw.Application):
         settings_box.append(actions_label)
 
         actions_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        refresh_btn = Gtk.Button(label=" Refresh All Tabs")
+        
+        refresh_btn = Gtk.Button(label="Refresh All Tabs")
         refresh_btn.connect("clicked", lambda w: print("Refresh All clicked!"))
         
-        export_btn = Gtk.Button(label=" Export Security Report")
+        export_btn = Gtk.Button(label="Export Security Report")
         def export_report(btn):
-            import datetime
-            import os
             report_dir = '/home/wgparch/Documents/aur-security-dashboard'
             os.makedirs(report_dir, exist_ok=True)
             report_path = os.path.join(report_dir, 'security_report.txt')
+            
             with open(report_path, 'w') as f:
                 f.write(f"AUR Security Dashboard Report\nGenerated: {datetime.datetime.now()}\n")
             print(f"Report exported to {report_path}")
+            
         export_btn.connect("clicked", lambda btn: threading.Thread(target=export_report, args=(btn,), daemon=True).start())
         
         actions_row.append(refresh_btn)
@@ -692,7 +872,6 @@ class SecurityApp(Adw.Application):
         info_label.set_margin_bottom(10)
         settings_box.append(info_label)
 
-        import platform
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         info_box.append(Gtk.Label(label=f"Hostname: {platform.node()}", xalign=0))
         info_box.append(Gtk.Label(label=f"Kernel: {platform.release()}", xalign=0))
@@ -707,25 +886,24 @@ class SecurityApp(Adw.Application):
         settings_box.append(info_box)
         self.stack.add_titled(settings_box, "settings", "Settings")
 
-        
-        # Restore Close Button
+        # =========================================================================
+        # WINDOW FINALIZATION
+        # =========================================================================
         close_btn = Gtk.Button(label="✖")
         close_btn.set_margin_end(20)
         close_btn.connect("clicked", lambda w: app.quit())
-        # Try to add to header bar if it exists, otherwise add to main box top
+        
+        # Add close button to header bar if it exists, otherwise add to main box top
         if hasattr(self, 'header_bar'):
             self.header_bar.pack_end(close_btn)
         else:
-            # Add to top of main_box
             top_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
             top_box.append(Gtk.Box()) # spacer
             top_box.append(close_btn)
             main_box.prepend(top_box)
 
         main_box.append(self.stack)
-
         self.win.set_child(main_box)
-
         self.win.present()
 
 

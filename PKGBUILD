@@ -8,9 +8,8 @@ url="https://github.com/WgpArch/aur-security-dashboard"
 license=('GPL-3.0-only')
 depends=('python' 'python-gobject' 'gtk4')
 makedepends=('git')
-# Use local file:// protocol to bypass GitHub password prompt!
-source=("git+file://$PWD#tag=v${pkgver}")
-sha256sums=('adc751224c2a746f436af63ab7ea75c86828a8a26f6f4387c5946596254c1b8c')
+source=("git+https://github.com/WgpArch/aur-security-dashboard.git#tag=v${pkgver}")
+sha256sums=('SKIP')
 
 package() {
     cd "$srcdir/$pkgname"

@@ -575,7 +575,7 @@ class SecurityApp(Adw.Application):
                         if len(parts) < 4: continue
                         
                         service_name = parts[0]
-                        active_state = parts2
+                        active_state = parts[2]
                         
                         # Flag failed services or services running from user home directories
                         if active_state == "failed" or "/home/" in svc:

@@ -33,19 +33,20 @@ paru -Syu --aur
 # OR
 yay -Syu --aur
 
-2.Inspect the PKGBUILD:
+2. Inspect the PKGBUILD:
 
-Before updating or reinstalling a suspicious AUR package, always inspect its build script (PKGBUILD) 
-for malicious commands like curl | bash, hidden network calls, or obfuscated code.
+Before updating or reinstalling a suspicious AUR package, always inspect its build script (PKGBUILD)
+for malicious commands like `curl | bash`, hidden network calls, or obfuscated code.
 
-# Using paru
+# Using paru (Views the PKGBUILD before building)
 paru -S --view <package-name>
 
-# Using yay 
+# Using yay (Prompts to edit the PKGBUILD before building)
 yay -S --editmenu <package-name>
 
-# Using trizen 
-trizen -S --noconfirm --view <package-name>
+# Using trizen (Downloads the PKGBUILD to the current directory for safe, manual inspection)
+trizen -G <package-name>
+cat PKGBUILD
 
 ⚠️ Arch-Specific Note: Always verify the maintainer's reputation on the AUR Website
 before trusting any PKGBUILD. Official Arch repositories (core, extra, multilib) are signed and vetted; AUR packages are not.
@@ -73,59 +74,84 @@ external services should be exposed.
 
 Incident Response Steps:
 
-1.Identify the Owning Process:
+1. Identify the Owning Process:
 
 For every suspicious connection, determine which process owns it. This tells you if it's a legitimate service or something malicious.
-CLOSE_WAIT / TIME_WAIT Accumulation: A high number of these states may indicate a service under stress, a misconfigured application, 
+CLOSE_WAIT / TIME_WAIT Accumulation: A high number of these states may indicate a service under stress, a misconfigured application,
 or a denial-of-service attack.
-IPv6 vs IPv4 Mismatches: Services listening only on IPv6 (::) but not IPv4 (or vice versa) when both should be configured, 
+IPv6 vs IPv4 Mismatches: Services listening only on IPv6 (::) but not IPv4 (or vice versa) when both should be configured,
 potentially creating blind spots in firewall rules.
 
-Find the PID and program name for a specific port/connection
-sudo ss -tlnp | grep <port-or-ip>
+# Find the PID, user, and program name for a specific port/connection (includes TCP, UDP, and all connection states)
+sudo ss -tunap | grep <port-or-ip>
+
 # OR use lsof for more detail
 sudo lsof -i :<port>
 
-2.Verify Service Legitimacy:
+# See exactly which user is running the suspicious PID
+ps -p <PID> -o user,pid,cmd
+
+2. Verify Service Legitimacy:
 Cross-reference the process name and binary path against known system services. Check if the binary matches its expected package.
 
-Verify which package owns a binary
+# Verify which official package owns the binary
 pacman -Qo /path/to/binary
 
-Check if the service is supposed to be running
-systemctl status <service-name>
+# If it's a systemd service, check its status and unit file path using the PID
+systemctl status <PID>
+systemctl show <service-name> -p FragmentPath
 
-3.Block Suspicious Connections Immediately:
+# If it's NOT a systemd service (unmanaged process), check its full command line
+cat /proc/<PID>/cmdline | tr '\0' ' ' && echo
+
+3. Block Suspicious Connections Immediately:
 If a connection is confirmed malicious or unauthorized, block it at the firewall level while you investigate further.
 
-Block outbound to suspicious IP (using nftables)
+# Check current firewall rules before modifying to avoid duplicates
+sudo nft list ruleset
+
+# Block outbound traffic to suspicious IP (stops C2 beacons/data exfiltration)
 sudo nft add rule inet filter output ip daddr <suspicious-ip> drop
 
-Or using iptables (legacy)
-sudo iptables -A OUTPUT -d <suspicious-ip> -j DROP
+# Block inbound traffic from suspicious IP (stops active intrusions)
+sudo nft add rule inet filter input ip saddr <suspicious-ip> drop
 
-4.Capture Traffic for Forensic Analysis:
-Before killing the process or blocking the connection permanently, capture the traffic for later analysis. 
+# Or using iptables (legacy)
+sudo iptables -A OUTPUT -d <suspicious-ip> -j DROP
+sudo iptables -A INPUT -s <suspicious-ip> -j DROP
+
+4. Capture Traffic for Forensic Analysis:
+Before killing the process or blocking the connection permanently, capture the traffic for later analysis.
 This preserves evidence.
 
-Capture packets to/from suspicious IP (run as root)
-sudo tcpdump -i any host <suspicious-ip> -w /tmp/suspicious_capture.pcap
+# Create a secure evidence directory (avoid /tmp as it is world-writable and cleared on reboot)
+mkdir -p ~/forensic_evidence
 
-Analyze later with Wireshark or tshark
-tshark -r /tmp/suspicious_capture.pcap -Y "http.request"
+# Capture packets to/from suspicious IP or specific port (run as root)
+sudo tcpdump -i any host <suspicious-ip> -w ~/forensic_evidence/suspicious_capture.pcap
+# OR capture by the suspicious port if the IP is dynamic
+sudo tcpdump -i any port <suspicious-port> -w ~/forensic_evidence/suspicious_capture.pcap
 
-5.Check for Persistence Mechanisms:
-Malware often reinstalls itself. After stopping a suspicious connection, check for cron jobs, systemd timers, or modified init 
+# Analyze later with Wireshark or tshark
+tshark -r ~/forensic_evidence/suspicious_capture.pcap -Y "http.request or dns"
+
+5. Check for Persistence Mechanisms:
+Malware often reinstalls itself. After stopping a suspicious connection, check for cron jobs, systemd timers, or modified init
 scripts that could restart it.
 
-List user cron jobs
+# List user cron jobs
 crontab -l
 
-List system cron jobs
+# List system cron jobs and user spool directories
 sudo ls /etc/cron.*
+sudo ls /var/spool/cron/
 
-Check for suspicious systemd timers
+# Check for suspicious system and USER-LEVEL systemd timers
 systemctl list-timers --all
+systemctl --user list-timers --all
+
+# Check for hidden desktop autostart entries (common for user-level malware)
+ls -la ~/.config/autostart/
 
 Severity Levels:
 
@@ -160,68 +186,89 @@ manipulating files in real-time to evade detection.
 
 Incident Response Steps:
 
-1.Isolate the Affected Package:
-Identify which official package owns the compromised file. This determines the scope of the compromise and the correct remediation 
-path.
+1. Isolate the Affected Package:
+Identify which official package owns the compromised file. This determines the scope of the compromise and the correct remediation path.
 
-Find the owning package for a suspicious file
+# Find the owning package for a suspicious file
 pacman -Qo /path/to/suspicious/file
 
-Reinstall the package to restore original files (DO NOT do this yet if forensics are needed)
+# Reinstall the package to restore original files (DO NOT do this yet if forensics are needed)
+# Note: Standard reinstall is usually enough. Only use --overwrite if pacman throws a "file exists in filesystem" conflict error.
+sudo pacman -S <package-name>
+# OR if file conflicts occur:
 sudo pacman -S --overwrite '*' <package-name>
 
-2.Preserve Forensic Evidence BEFORE Remediation:
+2. Preserve Forensic Evidence BEFORE Remediation:
 CRITICAL: Never overwrite or delete a suspicious file before capturing evidence. Create a forensic image first.
 
-# Hash the suspicious file for chain-of-custody
-sha256sum /path/to/suspicious/file > /tmp/evidence_hash.txt
+# Create a secure evidence directory (avoid /tmp as it is world-writable and cleared on reboot)
+mkdir -p ~/forensic_evidence
 
-# Copy the file to a secure evidence directory (preserve timestamps)
-sudo cp -a /path/to/suspicious/file /tmp/forensic_evidence/
+# Hash the suspicious file for chain-of-custody
+sha256sum /path/to/suspicious/file > ~/forensic_evidence/evidence_hash.txt
+
+# Copy the file to a secure evidence directory (preserve timestamps and permissions)
+sudo cp -a /path/to/suspicious/file ~/forensic_evidence/
 
 # Capture full file metadata
-stat /path/to/suspicious/file > /tmp/evidence_metadata.txt
-ls -laZ /path/to/suspicious/file >> /tmp/evidence_metadata.txt
+stat /path/to/suspicious/file > ~/forensic_evidence/evidence_metadata.txt
+ls -laZ /path/to/suspicious/file >> ~/forensic_evidence/evidence_metadata.txt
 
-3.Analyze the Modification:
+3. Analyze the Modification:
 Compare the suspicious file against the known-good version from the official package to understand what was changed.
 
-Extract the original file from the package archive
-mkdir -p /tmp/original_pkg && cd /tmp/original_pkg
+# If the package is not in the local cache, download it without installing
+pacman -Sw <package-name>
+
+# Extract the original file from the package archive
+mkdir -p ~/forensic_evidence/original_pkg && cd ~/forensic_evidence/original_pkg
 tar xf /var/cache/pacman/pkg/<package-name>-*.pkg.tar.zst
 
-Diff the original vs. the suspicious file
-diff -u /tmp/original_pkg/usr/bin/<binary> /path/to/suspicious/file
+# Diff the original vs. the suspicious file
+diff -u ~/forensic_evidence/original_pkg/usr/bin/<binary> /path/to/suspicious/file
 
-Check for strings indicating malicious behavior
-strings /path/to/suspicious/file | grep -iE 'curl|wget|bash|python|perl|socket|connect'
+# Check for strings indicating malicious behavior (C2, shells, network calls)
+strings /path/to/suspicious/file | grep -iE 'curl|wget|bash|python|perl|socket|connect|http|https|/bin/sh|/bin/bash'
 
-4.Check for Persistence Mechanisms:
+4. Check for Persistence Mechanisms:
 A modified binary is rarely standalone. Search for related persistence artifacts across the entire system.
 
-Search for recently modified files in critical directories (last 7 days)
-sudo find /usr/bin /usr/sbin /etc /lib -mtime -7 -type f -exec ls -la {} \;
+# Search for recently modified files in critical directories (last 7 days) - uses -ls for clean output
+sudo find /usr/bin /usr/sbin /etc /lib -mtime -7 -type f -ls
 
-Check for LD_PRELOAD hijacking (common rootkit technique)
+# Check for LD_PRELOAD hijacking (common rootkit technique)
 cat /etc/ld.so.preload 2>/dev/null
 env | grep -i preload
 
-Verify kernel module integrity
-sudo lsmod | sort
-sudo modinfo <suspicious-module> 2>/dev/null
+# Check for rogue library paths
+ls -la /etc/ld.so.conf.d/
 
-5.Remediate Safely:
+# Verify kernel module integrity (check filename and signer)
+sudo lsmod | sort
+sudo modinfo <suspicious-module> | grep -E 'filename|signer|description'
+
+5. Remediate Safely:
 Only after evidence is preserved and analyzed, restore the system to a known-good state.
 
-Reinstall the affected package with overwrite flag
+# Reinstall the affected package (try standard first, force overwrite only if file conflicts occur)
+sudo pacman -S <package-name>
+# OR if file conflicts occur:
 sudo pacman -S --overwrite '*' <package-name>
 
-Verify restoration succeeded
-sudo pacman -Qk <package-name>
+# Verify restoration succeeded (use -Qkk to check permissions and timestamps, not just missing files)
+sudo pacman -Qkk <package-name>
 
-Rotate ALL credentials if any auth-related files were modified
+# Rotate ALL credentials if any auth-related files were modified
 sudo passwd root
-Change passwords for all user accounts
+passwd <username>
+
+# CRITICAL: If SSH or Sudo was compromised, changing passwords is NOT enough!
+# Check for unauthorized SSH keys added by the attacker
+cat ~/.ssh/authorized_keys
+cat /root/.ssh/authorized_keys
+
+# Check for unauthorized sudoers entries (e.g., NOPASSWD backdoors)
+sudo grep -r 'NOPASSWD' /etc/sudoers /etc/sudoers.d/
 
 Severity Levels:
 
@@ -261,60 +308,82 @@ its package install date, it may have been trojaned while retaining its SUID bit
 
 Incident Response Steps:
 
-1.Verify Against Official Whitelist:
-Cross-reference every flagged binary against the known-good Arch Linux SUID list. Your dashboard already includes this whitelist; 
+1. Verify Against Official Whitelist:
+Cross-reference every flagged binary against the known-good Arch Linux SUID list. Your dashboard already includes this whitelist;
 use it as your baseline.
-Unexpected SGID Binaries: SGID files grant group-level privileges. While less critical than SUID, unexpected SGID binaries 
+Unexpected SGID Binaries: SGID files grant group-level privileges. While less critical than SUID, unexpected SGID binaries
 (especially those granting disk, shadow, or wheel group access) can leak sensitive data.
-SUID Binaries Owned by Non-Root Users: A SUID binary owned by a regular user runs with that user's privileges, not root. 
+SUID Binaries Owned by Non-Root Users: A SUID binary owned by a regular user runs with that user's privileges, not root.
 This is unusual and may indicate a misconfiguration or a targeted attack against a specific account.
 
-Manually verify if a binary belongs to an official package
+# Manually verify if a binary belongs to an official package
 pacman -Qo /path/to/suid/binary
+# (Note: If it returns "No package owns...", it is an immediate red flag)
 
-Check the package's expected SUID files
-pacman -Ql <package-name> | grep -E '^.* s$'  # 's' indicates SUID in pacman output
+# Visually confirm the SUID/SGID bits ('s') and check the actual owner/group
+ls -la /path/to/suid/binary
 
-2.Analyze Suspicious Binaries:
+# Check the package's expected SUID/SGID files
+pacman -Ql <package-name> | grep -E '^.* [sS]$'  # 's'/'S' indicates SUID/SGID in pacman output
+
+2. Analyze Suspicious Binaries:
 For any non-whitelisted SUID file, determine its origin and intent before taking action.
 
-Check file type and architecture
+# Check file type, architecture, and if it has been "stripped" (symbols removed to hide code)
 file /path/to/suspicious/suid/binary
 
-Search for embedded strings indicating malicious behavior
-strings /path/to/suspicious/suid/binary | grep -iE 'connect|socket|exec|shell|reverse|callback'
+# CRITICAL: Check for Linux Capabilities (modern alternative to SUID used by malware to bypass scanners)
+getcap /path/to/suspicious/suid/binary
 
-Check when the SUID bit was last set (may differ from file mod time)
+# Search for embedded strings indicating malicious behavior
+strings /path/to/suspicious/suid/binary | grep -iE 'connect|socket|exec|shell|reverse|callback|http|/bin/sh'
+
+# Check when the SUID bit was last set and view full metadata (may differ from file mod time)
 stat /path/to/suspicious/suid/binary
 
-3.Preserve Evidence Before Removal:
+3. Preserve Evidence Before Removal:
 Never delete a suspicious SUID binary immediately. It is critical evidence.
 
-Create forensic copy preserving all attributes
-sudo cp -a /path/to/suspicious/suid/binary /tmp/forensic_evidence/suid_$(date +%Y%m%d_%H%M%S)
+# Create a secure evidence directory (avoid /tmp as it is world-writable and cleared on reboot)
+mkdir -p ~/forensic_evidence
 
-Record full metadata including SUID bit state
-ls -la /path/to/suspicious/suid/binary > /tmp/forensic_evidence/suid_metadata.txt
-getcap /path/to/suspicious/suid/binary >> /tmp/forensic_evidence/suid_metadata.txt 2>/dev/null
+# Create forensic copy preserving all attributes and timestamps
+sudo cp -a /path/to/suspicious/suid/binary ~/forensic_evidence/suid_$(date +%Y%m%d_%H%M%S)
 
-4.Remove the SUID Bit Safely:
-If the binary is confirmed malicious or unnecessary, strip the SUID/SGID bit first (rather than deleting) to preserve the file for 
+# Hash the original file for chain-of-custody verification
+sudo sha256sum /path/to/suspicious/suid/binary > ~/forensic_evidence/suid_hash.txt
+
+# Record full metadata including SUID bit state and Capabilities
+ls -la /path/to/suspicious/suid/binary > ~/forensic_evidence/suid_metadata.txt
+getcap /path/to/suspicious/suid/binary >> ~/forensic_evidence/suid_metadata.txt 2>/dev/null
+
+4. Remove the SUID Bit Safely:
+If the binary is confirmed malicious or unnecessary, strip the SUID/SGID bit first (rather than deleting) to preserve the file for
 analysis while neutralizing the threat.
 
-Remove SUID and SGID bits
+# Remove SUID and SGID bits
 sudo chmod u-s,g-s /path/to/suspicious/suid/binary
 
-Verify the bit was removed
-ls -la /path/to/suspicious/suid/binary
+# CRITICAL: Also remove Linux Capabilities if they were present (modern malware bypasses SUID using caps)
+sudo setcap -r /path/to/suspicious/suid/binary
 
-5.Search for Related Persistence Artifacts:
+# Verify the bits and capabilities were removed
+ls -la /path/to/suspicious/suid/binary
+getcap /path/to/suspicious/suid/binary
+
+5. Search for Related Persistence Artifacts:
 A rogue SUID binary rarely exists alone. Hunt for associated artifacts.
 
-Find other files created/modified around the same time
-sudo find / -newer /path/to/suspicious/suid/binary -not -path "/proc/*" -not -path "/sys/*" -type f 2>/dev/null
+# Find other files created/modified around the same time in HIGH-RISK directories only (faster than scanning /)
+sudo find /etc /usr/local /tmp /var/tmp /dev/shm /home -newer /path/to/suspicious/suid/binary -type f -ls 2>/dev/null
 
-Check for cron jobs or systemd services referencing the binary
+# Check for system cron jobs or systemd services referencing the binary
 grep -r "suspicious_binary_name" /etc/cron* /etc/systemd/ /var/spool/cron/ 2>/dev/null
+
+# Check for USER-LEVEL persistence (attackers often hide here to avoid root requirements)
+crontab -l
+ls -la ~/.config/systemd/user/
+ls -la ~/.config/autostart/
 
 Search bash history for commands related to setting SUID bits
 sudo grep -r "chmod.*[42].." /home/*/.*history /root/.*history 2>/dev/null
@@ -363,60 +432,63 @@ expect to be exposed (e.g., SSH login when you only use local console).
 
 Incident Response Steps:
 
-1.Correlate Failed + Successful Attempts:
+1. Correlate Failed + Successful Attempts:
 
-Don’t treat failed and successful logins in isolation. Link them by source IP and timestamp to identify successful breaches after 
+Don’t treat failed and successful logins in isolation. Link them by source IP and timestamp to identify successful breaches after
 probing.
 
-Find all auth events from a specific suspicious IP in last 24h
+# Find all auth events from a specific suspicious IP in last 24h
 journalctl --since "24 hours ago" | grep "<suspicious-ip>" | grep -E "Failed|Accepted|session opened"
 
-Count failures vs successes per IP
-journalctl --since "24 hours ago" -g "Failed password|Accepted" | awk '{print $NF}' | sort | uniq -c | sort -rn
+# Count failures vs successes per IP (using regex to extract ONLY the IP address, avoiding trailing punctuation errors)
+journalctl --since "24 hours ago" -g "Failed password|Accepted" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort | uniq -c | sort -rn
 
-2.Identify Targeted Accounts:
+2. Identify Targeted Accounts:
 Determine which user accounts are being targeted. Repeated attempts against root, admin, or service accounts indicate focused attacks.
 
-List all targeted usernames from failed attempts
+# List all targeted usernames from failed attempts
 journalctl --since "24 hours ago" -g "Failed password" | grep -oP 'for \K\S+' | sort | uniq -c | sort -rn
 
-Check if targeted accounts have weak passwords or are disabled
+# Check if targeted accounts have weak passwords, are locked, or have no password
 sudo passwd -S <targeted-username>
 
-3.Preserve Log Evidence Before Rotation:
+3. Preserve Log Evidence Before Rotation:
 System logs rotate automatically. Preserve relevant entries immediately to prevent evidence loss.
 
-Export all auth events from last 24h to forensic file
-journalctl --since "24 hours ago" -g "Failed|Accepted|session|sudo" > /tmp/forensic_evidence/auth_log_$(date +%Y%m%d_%H%M%S).txt
+# Create secure evidence directory
+mkdir -p ~/forensic_evidence
 
-Also preserve raw journal binary for full metadata
-sudo cp /var/log/journal/*/system.journal /tmp/forensic_evidence/ 2>/dev/null || \
-sudo journalctl --output=export > /tmp/forensic_evidence/journal_export.bin
+# Export all auth events from last 24h to forensic file
+journalctl --since "24 hours ago" -g "Failed|Accepted|session|sudo" > ~/forensic_evidence/auth_log_$(date +%Y%m%d_%H%M%S).txt
 
-4.Block Attacking IPs Immediately:
+# Preserve raw journal binary for full metadata (safest method)
+sudo journalctl --output=export > ~/forensic_evidence/journal_export.bin
+
+4. Block Attacking IPs Immediately:
 If brute force or unauthorized access is confirmed, block the source at the firewall level while preserving logs.
 
 # Block IP with nftables (preferred on modern Arch)
 sudo nft add rule inet filter input ip saddr <attacker-ip> drop
 
-Or with iptables (legacy)
+# Or with iptables (legacy)
 sudo iptables -A INPUT -s <attacker-ip> -j DROP
 
-Verify block is active
+# Verify block is active
 sudo nft list ruleset | grep <attacker-ip>
 
-5.Audit Affected Accounts & Services:
+5. Audit Affected Accounts & Services:
 After blocking, verify no persistence was established through the compromised account or service.
 
-# Check authorized_keys for targeted user
+# Check authorized_keys for targeted user AND root (attackers often target both)
 cat /home/<user>/.ssh/authorized_keys
+sudo cat /root/.ssh/authorized_keys
 
-Review sudoers configuration for unauthorized entries
+# Review sudoers configuration for unauthorized entries
 sudo visudo -c
 sudo grep -r "<user>" /etc/sudoers.d/
 
-Check for new SSH keys or config changes
-sudo find /etc/ssh /home/<user>/.ssh -mtime -1 -type f
+# Check for new SSH keys or config changes in the last 24 hours
+sudo find /etc/ssh /home/<user>/.ssh /root/.ssh -mtime -1 -type f
 
 Severity Levels:
 
@@ -465,76 +537,83 @@ Malware often deletes its own binary after execution to evade file-based detecti
 
 Incident Response Steps:
 
-1.Verify Process Legitimacy:
+1. Verify Process Legitimacy:
 Before taking action, confirm whether the flagged process is genuinely anomalous or a false positive.
 
-Get full process details including binary path and command line
-ps aux | grep <suspicious-pid>
+# Get full process details cleanly (avoids matching the grep command itself)
+ps -p <suspicious-pid> -o pid,user,comm,args
 
-Check the actual binary being executed (may differ from process name)
+# Check the actual binary being executed (may differ from process name)
 ls -la /proc/<suspicious-pid>/exe
 
-View the complete command line with arguments
+# View the complete command line with arguments
 cat /proc/<suspicious-pid>/cmdline | tr '\0' ' ' && echo
 
-Verify if the binary belongs to an official package
+# Verify if the binary belongs to an official package
 pacman -Qo /proc/<suspicious-pid>/exe 2>/dev/null || echo "NOT FROM OFFICIAL PACKAGE"
 
-2.Capture Live Process Evidence:
+2. Capture Live Process Evidence:
 Do not kill the process immediately. Preserve its state for forensic analysis first.
 
-Dump process memory map to identify loaded libraries and injected code
-sudo cat /proc/<suspicious-pid>/maps > /tmp/forensic_evidence/process_<pid>_maps.txt
+# Create secure evidence directory
+mkdir -p ~/forensic_evidence
 
-Capture open file descriptors (reveals C2 connections, log files, etc.)
-sudo ls -la /proc/<suspicious-pid>/fd/ > /tmp/forensic_evidence/process_<pid>_fds.txt
+# Dump process memory map to identify loaded libraries and injected code
+sudo cat /proc/<suspicious-pid>/maps > ~/forensic_evidence/process_<pid>_maps.txt
 
-Extract environment variables (may contain API keys, tokens, C2 URLs)
-sudo cat /proc/<suspicious-pid>/environ | tr '\0' '\n' > /tmp/forensic_evidence/process_<pid>_env.txt
+# Capture open file descriptors (reveals C2 connections, log files, etc.)
+sudo ls -la /proc/<suspicious-pid>/fd/ > ~/forensic_evidence/process_<pid>_fds.txt
 
-If binary was deleted, recover it from /proc before it's gone forever
-sudo cp /proc/<suspicious-pid>/exe /tmp/forensic_evidence/recovered_binary_<pid>
+# Extract environment variables (may contain API keys, tokens, C2 URLs)
+sudo cat /proc/<suspicious-pid>/environ | tr '\0' '\n' > ~/forensic_evidence/process_<pid>_env.txt
 
-3.Analyze Network Connections:
+# If binary was deleted, recover it from /proc before it's gone forever
+sudo cp /proc/<suspicious-pid>/exe ~/forensic_evidence/recovered_binary_<pid>
+
+3. Analyze Network Connections:
 Determine what the process is communicating with to assess data exfiltration or C2 activity.
 
-Show all network connections for the suspicious PID
-sudo ss -tlnp | grep <suspicious-pid>
-sudo ss -unp | grep <suspicious-pid>
+# Show ALL network connections for the suspicious PID (TCP, UDP, Listening, and Outbound)
+sudo ss -tunap | grep <suspicious-pid>
 
-Capture live traffic to/from the process for protocol analysis
-sudo tcpdump -i any pid <suspicious-pid> -w /tmp/forensic_evidence/process_<pid>_capture.pcap &
-Let it run for 30-60 seconds, then: kill %1
+# Capture live traffic to/from the process (tcpdump filters by PORT, not PID)
+# First, note the ports from the ss command above, then capture them:
+sudo tcpdump -i any port <suspicious-port> -w ~/forensic_evidence/process_<pid>_capture.pcap &
+# Let it run for 30-60 seconds, then: kill %1
 
-4.Terminate and Contain:
+4. Terminate and Contain:
 Only after evidence is preserved, stop the process and prevent immediate respawn.
 
-Send SIGSTOP first to freeze the process (prevents cleanup/deletion)
+# Send SIGSTOP first to freeze the process (prevents cleanup/deletion)
 sudo kill -STOP <suspicious-pid>
 
-Then terminate gracefully
+# Then terminate gracefully
 sudo kill -TERM <suspicious-pid>
 
-If it refuses to die, force kill
+# If it refuses to die, force kill
 sudo kill -9 <suspicious-pid>
 
-Block associated IPs at firewall level
+# Block associated IPs at firewall level
 sudo nft add rule inet filter output ip daddr <c2-ip> drop
 
-5.Hunt for Persistence Mechanisms:
+5. Hunt for Persistence Mechanisms:
 A running process is usually just one component. Find how it survives reboots.
 
-Search for cron jobs referencing the binary or its path
-sudo grep -r "<binary-name-or-path>" /etc/cron* /var/spool/cron/ /home/*/crontab 2>/dev/null
+# Search for cron jobs referencing the binary or its path
+sudo grep -r "<binary-name-or-path>" /etc/cron* /var/spool/cron/ 2>/dev/null
 
-Check systemd services and timers
+# Check system AND user-level systemd services and timers
 systemctl list-units --type=service --all | grep -i "<binary-name>"
-systemctl list-timers --all | grep -i "<binary-name>"
+systemctl --user list-units --type=service --all | grep -i "<binary-name>"
 
-Look for init scripts or rc.local modifications
+# Check for user-level autostart entries (common for desktop malware)
+ls -la ~/.config/autostart/
+ls -la ~/.config/systemd/user/
+
+# Look for init scripts or rc.local modifications
 grep -r "<binary-name>" /etc/init.d/ /etc/rc.local /etc/profile.d/ 2>/dev/null
 
-Check for LD_PRELOAD or library injection
+# Check for LD_PRELOAD or library injection
 cat /etc/ld.so.preload 2>/dev/null
 sudo find /usr/lib /lib -name "*.so" -mtime -1 2>/dev/null
 
@@ -584,76 +663,82 @@ daily/weekly), often used for periodic C2 beaconing or data exfiltration.
 
 Incident Response Steps:
 
-1.Investigate Failed Services First:
+1. Investigate Failed Services First:
 Failed services are high-priority indicators. Determine why they failed before assuming compromise.
 
-Get detailed failure reason and recent logs
+# Get detailed failure reason and recent logs
 systemctl status <failed-service-name>
 journalctl -u <failed-service-name> --since "24 hours ago" --no-pager
 
-Check if the binary exists and is intact
+# Check if the binary exists and is intact
 systemctl show <failed-service-name> -p ExecStart
 ls -la /path/to/binary/from/execstart
 pacman -Qo /path/to/binary/from/execstart 2>/dev/null || echo "NOT FROM OFFICIAL PACKAGE"
 
-2.Verify Suspicious Service Configuration:
+2. Verify Suspicious Service Configuration:
 For any service running from writable paths or with unexpected privileges, inspect its full unit file.
 
-View the complete unit file (including drop-in overrides)
+# View the complete unit file (including drop-in overrides)
 systemctl cat <suspicious-service-name>
 
-Check for runtime modifications not in the unit file
+# Check for runtime modifications not in the unit file
 systemctl show <suspicious-service-name> | grep -E "ExecStart|User|Group|Capability|ReadWritePaths"
 
-Verify the binary's integrity against package database
+# Verify the binary's integrity against package database
 sudo pacman -Qk <owning-package> 2>/dev/null || echo "PACKAGE NOT FOUND OR MODIFIED"
 
-3.Preserve Service Evidence Before Disabling:
+3. Preserve Service Evidence Before Disabling:
 Never disable or stop a suspicious service before capturing its configuration and logs.
 
-Export full unit file and drop-ins to evidence directory
-mkdir -p /tmp/forensic_evidence/services
-systemctl cat <suspicious-service-name> > /tmp/forensic_evidence/services/<service-name>.unit
+# Create secure evidence directory
+mkdir -p ~/forensic_evidence/services
 
-Capture current runtime state and environment
-systemctl show <suspicious-service-name> > /tmp/forensic_evidence/services/<service-name>.runtime
+# Export full unit file and drop-ins to evidence directory
+systemctl cat <suspicious-service-name> > ~/forensic_evidence/services/<service-name>.unit
 
-Preserve associated logs (critical for timeline reconstruction)
-journalctl -u <suspicious-service-name> --no-pager > /tmp/forensic_evidence/services/<service-name>.log
+# Capture current runtime state and environment
+systemctl show <suspicious-service-name> > ~/forensic_evidence/services/<service-name>.runtime
 
-If timer-activated, also preserve the timer unit
-systemctl cat <service-name>.timer > /tmp/forensic_evidence/services/<service-name>.timer.unit 2>/dev/null
+# Preserve associated logs (critical for timeline reconstruction)
+journalctl -u <suspicious-service-name> --no-pager > ~/forensic_evidence/services/<service-name>.log
 
-4.Disable and Contain Safely:
+# If timer-activated, also preserve the timer unit
+systemctl cat <service-name>.timer > ~/forensic_evidence/services/<service-name>.timer.unit 2>/dev/null
+
+4. Disable and Contain Safely:
 After evidence preservation, neutralize the service while maintaining forensic integrity.
 
-Stop the service first (don't disable yet—stopping preserves runtime state in /proc)
+# Stop the service first (don't disable yet—stopping preserves runtime state in /proc)
 sudo systemctl stop <suspicious-service-name>
 
-Disable to prevent restart on boot
+# Disable to prevent restart on boot
 sudo systemctl disable <suspicious-service-name>
 
-Mask to prevent accidental re-enablement during investigation
+# Mask to prevent accidental re-enablement during investigation
 sudo systemctl mask <suspicious-service-name>
 
-If timer-activated, also disable/mask the timer
+# If timer-activated, also disable/mask the timer
 sudo systemctl stop <service-name>.timer 2>/dev/null
 sudo systemctl disable <service-name>.timer 2>/dev/null
 sudo systemctl mask <service-name>.timer 2>/dev/null
 
-5.Hunt for Related Persistence Artifacts:
+5. Hunt for Related Persistence Artifacts:
 A malicious service rarely exists alone. Search for companion artifacts across the system.
 
 # Find other files created/modified near the service unit file timestamp
 sudo find /etc/systemd /usr/lib/systemd -newer /etc/systemd/system/<suspicious-service>.service -type f 2>/dev/null
 
 # Check for corresponding cron jobs (attackers often use both)
-sudo grep -r "<binary-name-or-path>" /etc/cron* /var/spool/cron/ /home/*/crontab 2>/dev/null
+sudo grep -r "<binary-name-or-path>" /etc/cron* /var/spool/cron/ 2>/dev/null
 
-Search for related binaries in writable directories
+# CRITICAL: Check for USER-LEVEL systemd services (malware often hides here to avoid root)
+ls -la ~/.config/systemd/user/
+systemctl --user list-units --type=service --all | grep -i "<binary-name>"
+
+# Search for related binaries in writable directories
 sudo find /tmp /var/tmp /dev/shm /home -name "*<service-keyword>*" -type f -mtime -7 2>/dev/null
 
-Review systemd journal for service creation/modification events
+# Review systemd journal for service creation/modification events
 journalctl _SYSTEMD_UNIT=<suspicious-service-name> --output=verbose | grep -E "Created|Modified|Enabled"
 
 Severity Levels:
@@ -702,64 +787,53 @@ Excessive Permissions: Use of chmod 777 or chown root:root on files that do not 
 
 Incident Response Steps:
 
-1.Halt Installation and Isolate:
-If the Code Inspector flags a package, do not install or update it. Isolate the package name and investigate further before 
-proceeding.
+1. Halt Installation and Isolate:
+If the Code Inspector flags a package, do not install or update it. Isolate the package name and investigate further before proceeding.
 
-If using an AUR helper, abort the current transaction
+# If using an AUR helper, abort the current transaction
 (Usually Ctrl+C or 'N' when prompted)
 
-Manually download the PKGBUILD for offline inspection
-git clone https://aur.archlinux.org/<package-name>.git /tmp/aur_audit/<package-name>
-cd /tmp/aur_audit/<package-name>
+# Manually download the PKGBUILD to a secure forensic directory for offline inspection
+mkdir -p ~/forensic_evidence/aur_audit
+git clone https://aur.archlinux.org/<package-name>.git ~/forensic_evidence/aur_audit/<package-name>
+cd ~/forensic_evidence/aur_audit/<package-name>
 
-2.Decode Obfuscated Payloads:
+2. Decode Obfuscated Payloads:
 If the scanner flags base64 or hex strings, decode them in a safe, isolated environment to reveal the hidden payload.
 
-Decode a base64 string safely (do not pipe to bash!)
-echo "<suspicious-base64-string>" | base64 -d > /tmp/decoded_payload.txt
+# Decode a base64 string safely (use printf to prevent accidental escape character interpretation)
+printf "%s" "<suspicious-base64-string>" | base64 -d > ~/forensic_evidence/decoded_payload.txt
 
-View the decoded payload in a safe text editor
-nano /tmp/decoded_payload.txt
+# View the decoded payload in a safe text editor
+nano ~/forensic_evidence/decoded_payload.txt
 
-Check if the decoded payload contains network calls or shell commands
-grep -iE 'curl|wget|bash|sh|python|socket|connect|/dev/tcp' /tmp/decoded_payload.txt
+# Check if the decoded payload contains network calls or shell commands
+grep -iE 'curl|wget|bash|sh|python|socket|connect|/dev/tcp|http' ~/forensic_evidence/decoded_payload.txt
 
-3.Audit the Maintainer and Package History:
+3. Audit the Maintainer and Package History:
 Check the human element. A sudden change in a PKGBUILD from a previously trusted maintainer often indicates a compromised account.
 
-Check the AUR page for comments, out-of-date flags, and recent changes
-(Do this via your web browser at aur.archlinux.org)
-
-Check the git history of the PKGBUILD for sudden, unexplained changes
-cd /tmp/aur_audit/<package-name>
+# Check the git history for sudden, unexplained changes to the PKGBUILD
 git log -p PKGBUILD
 
-4.Build in a Sandbox (Advanced Forensics):
-If the PKGBUILD is complex and you cannot determine its behavior through static analysis, build it in an isolated environment to 
-observe its runtime behavior.
+# Run namcap (Official Arch package analyzer) to automatically flag security issues, bad practices, or missing dependencies
+namcap PKGBUILD
 
-Use systemd-nspawn or a chroot to build safely
-Example using a basic chroot (requires arch-chroot)
+# Check the AUR web page for comments, out-of-date flags, and recent maintainer activity
+(Do this via your web browser at aur.archlinux.org/packages/<package-name>)
+
+4. Build in a Sandbox (Advanced Forensics):
+If the PKGBUILD is complex and you cannot determine its behavior through static analysis, build it in an isolated environment to observe its runtime behavior.
+
+# WARNING: Never run makepkg as root. Even in a chroot, create a temporary user or use a tool like systemd-nspawn.
+# Example using a basic arch-chroot (requires a pre-configured chroot environment)
 
 sudo arch-chroot /path/to/clean/chroot
-Inside chroot:
+# Inside chroot (as a non-root user if possible):
+cd /home/user/aur_audit/<package-name>
+makepkg --noconfirm
 
-cd /tmp/aur_audit/<package-name>
-makepkg -si --noconfirm
-
-Monitor network traffic and file changes during this process
-
-5.Report and Contain:
-If malicious code is confirmed, report it immediately to protect the community and block the associated infrastructure.
-
-Flag the package as out-of-date or malicious on the AUR website
-Send a detailed report to the AUR mailing list or security@archlinux.org
-
-Block any malicious domains or IPs found in the PKGBUILD
-
-sudo nft add rule inet filter output ip daddr <malicious-ip> drop
-sudo nft add rule inet filter output dport <malicious-port> drop
+# Monitor network traffic and file changes during this process
 
 Severity Levels:
 
@@ -800,67 +874,69 @@ credentials.
 
 Incident Response Steps:
 
-1.Verify Current Kernel State:
-Before making changes, confirm the exact current values of the flagged parameters to ensure the dashboard is reading them correctly 
-and to establish a baseline.
+1. Verify Current Kernel State:
+Before making changes, confirm the exact current values of the flagged parameters to ensure the dashboard is reading them correctly and to establish a baseline.
 
-Check MAC status
-
+# Check Mandatory Access Control (MAC) status
 cat /sys/kernel/security/lsm
 
-Check kernel hardening parameters
-
+# Check kernel hardening parameters
 sysctl kernel.kptr_restrict
 sysctl kernel.yama.ptrace_scope
 sysctl net.core.bpf_jit_harden
+sysctl kernel.dmesg_restrict
+sysctl kernel.unprivileged_bpf_disabled
 
-Disabled BPF JIT Hardening: The Berkeley Packet Filter (BPF) is heavily used in modern networking and tracing. If JIT hardening is 
-off, it increases the risk of speculative execution attacks (like Spectre) via malicious BPF programs.
+2. Apply Immediate Temporary Mitigations:
+If a critical parameter is vulnerable, you can change it immediately in the running kernel without rebooting. This is useful during an active incident to stop an ongoing exploit attempt.
 
-2.Apply Immediate Temporary Mitigations:
-If a critical parameter is vulnerable, you can change it immediately in the running kernel without rebooting. This is useful during 
-an active incident to stop an ongoing exploit attempt.
-
-Restrict kernel pointers (1 = hidden from non-root, 2 = hidden from everyone)
-
+# Restrict kernel pointers (1 = hidden from non-root, 2 = hidden from everyone)
 sudo sysctl -w kernel.kptr_restrict=2
 
-Restrict ptrace (1 = restricted to children, 2 = admin-only, 3 = disabled)
-
+# Restrict ptrace (1 = restricted to children, 2 = admin-only, 3 = disabled)
 sudo sysctl -w kernel.yama.ptrace_scope=1
 
-Harden BPF JIT (1 = unprivileged only, 2 = all code)
-
+# Harden BPF JIT (1 = unprivileged only, 2 = all code)
 sudo sysctl -w net.core.bpf_jit_harden=2
 
-3.Make Hardening Permanent:
+# Prevent unprivileged users from reading kernel logs (stops KASLR leaks)
+sudo sysctl -w kernel.dmesg_restrict=1
+
+# Prevent unprivileged users from loading BPF programs
+sudo sysctl -w kernel.unprivileged_bpf_disabled=1
+
+3. Make Hardening Permanent:
 Temporary sysctl changes revert on reboot. To make them permanent, create a dedicated configuration file.
 
-Create a custom hardening config file
-
+# Create a custom hardening config file
 sudo nano /etc/sysctl.d/99-arch-hardening.conf
 
-Add the following lines:
+# Add the following lines:
 kernel.kptr_restrict = 2
 kernel.yama.ptrace_scope = 1
 net.core.bpf_jit_harden = 2
+kernel.dmesg_restrict = 1
+kernel.unprivileged_bpf_disabled = 1
 
-Apply the new configuration immediately
-
+# Apply the new configuration immediately
 sudo sysctl --system
 
-4.Enable Mandatory Access Control (MAC):
-If the dashboard reports MAC as "Inactive", you should enable a MAC framework. Arch Linux supports AppArmor and TOMOYO out of the 
-box via kernel parameters.
+4. Enable Mandatory Access Control (MAC) & Kernel Lockdown:
+If the dashboard reports MAC as "Inactive", you should enable a MAC framework. AppArmor is the recommended, most widely supported choice for Arch Linux.
 
-For AppArmor (requires installing apparmor package and adding to bootloader)
-Edit your bootloader config (GRUB/systemd-boot) and add to kernel parameters:
-apparmor=1 security=apparmor
+# Step A: Install AppArmor
+sudo pacman -S apparmor
 
-For TOMOYO (requires installing tomoyo-toolsAUR)
-Edit bootloader config and add:
-lsm=landlock,lockdown,yama,integrity,tomoyo,bpf
-security=tomoyo
+# Step B: Enable Kernel Lockdown (Prevents even root from modifying the running kernel)
+# Edit your bootloader config (GRUB or systemd-boot) and append to the kernel parameters:
+lockdown=confidentiality apparmor=1 security=apparmor
+
+# Step C: Update bootloader and reboot
+# (For GRUB: sudo grub-mkconfig -o /boot/grub/grub.cfg)
+# (For systemd-boot: changes apply on next reboot)
+
+# Step D: Verify after reboot
+cat /sys/kernel/security/lsm  # Should show "lockdown,yama,apparmor"
 
 Severity Levels:
 

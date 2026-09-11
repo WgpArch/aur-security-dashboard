@@ -15,6 +15,8 @@ import datetime
 import os
 import re
 import json
+import math 
+import base64 
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -57,6 +59,99 @@ def save_config(config):
     except Exception as e:
         print(f"Failed to save config: {e}")
 
+# --- PKGBUILD Analysis Engine ---
+def shannon_entropy(data):
+    """Calculates randomness. High entropy = obfuscated/encoded payload."""
+    if not data: return 0
+    freq = {}
+    for char in data:
+        freq[char] = freq.get(char, 0) + 1
+    entropy = 0
+    for count in freq.values():
+        p = count / len(data)
+        if p > 0:
+            entropy -= p * math.log2(p)
+    return entropy
+
+def analyze_pkgbuild_content(text):
+    findings = []
+    verdict = "✅ LOOKS CLEAN"
+    verdict_color = "#2ecc71"
+    has_critical = False
+    has_warning = False
+
+    # 1. Provenance & Hygiene
+    if "sha256sums=('SKIP'" in text or 'sha256sums=("SKIP"' in text:
+        findings.append(("⚠️ WARNING", "Missing Checksums", "sha256sums contains 'SKIP'. Integrity cannot be verified.", "#f39c12"))
+        has_warning = True
+    if ".install=" in text:
+        findings.append(("⚠️ WARNING", "Install Script", "Package uses a custom .install script (post-install hooks).", "#f39c12"))
+        has_warning = True
+    if re.search(r'source=\(.*git\+', text) or re.search(r'source=\(.*\.git\b', text):
+         findings.append(("ℹ️ INFO", "VCS Package", "Source is a live git repo. Code can change after this review.", "#3498db"))
+
+    # 2. Build System Detection
+    build_systems = []
+    if "cargo " in text or "cargo build" in text: build_systems.append("Rust/Cargo")
+    if "cmake " in text or "cmake .." in text: build_systems.append("CMake")
+    if "ninja" in text: build_systems.append("Ninja")
+    if "meson " in text: build_systems.append("Meson")
+    if "go build" in text: build_systems.append("Go")
+    if "pip install" in text or "python setup.py" in text: build_systems.append("Python/Pip")
+    
+    if build_systems:
+        findings.append(("🔧 BUILD", "Toolchain Detected", f"{', '.join(build_systems)} executes code during build outside this PKGBUILD.", "#9b59b6"))
+
+    # 3. Red Flags (Critical)
+    red_flags = [
+        (r'curl\s+.*\|\s*(ba)?sh', "Pipes curl directly to shell"),
+        (r'wget\s+.*\|\s*(ba)?sh', "Pipes wget directly to shell"),
+        (r'eval\s+', "Uses eval()"),
+        (r'base64\s+-d', "Decodes base64"),
+        (r'chmod\s+[0-7]*4[0-7]*', "Sets SUID/SGID permissions"),
+        (r'setcap\s+', "Sets Linux capabilities"),
+        (r'/dev/shm/', "Writes to shared memory (/dev/shm)"),
+        (r'~/.bashrc|~/.profile|~/.zshrc', "Modifies user shell profiles"),
+        (r'/etc/systemd/', "Drops systemd service files"),
+    ]
+    for pattern, desc in red_flags:
+        if re.search(pattern, text):
+            findings.append(("⛔ CRITICAL", "Red Flag", desc, "#e74c3c"))
+            has_critical = True
+
+    # 4. Network in build()
+    if re.search(r'build\(\)\s*\{.*?(curl|wget|nc\s)', text, re.DOTALL):
+        findings.append(("⛔ CRITICAL", "Network in build()", "Fetches external data during the build phase.", "#e74c3c"))
+        has_critical = True
+
+    # 5. Entropy Scoring (Obfuscation check)
+    long_strings = re.findall(r'[A-Za-z0-9+/=]{60,}', text)
+    for s in long_strings:
+        if shannon_entropy(s) > 4.8: # High entropy threshold
+            findings.append(("⚠️ WARNING", "High Entropy Blob", "Found a long, highly randomized string (possible encoded payload).", "#f39c12"))
+            has_warning = True
+            break 
+
+    # 6. Recursive Decoding (Base64)
+    b64_matches = re.findall(r'[A-Za-z0-9+/]{40,}={0,2}', text)
+    for match in b64_matches:
+        try:
+            decoded = base64.b64decode(match).decode('utf-8', errors='ignore')
+            if len(decoded) > 10:
+                for pattern, desc in red_flags:
+                    if re.search(pattern, decoded):
+                        findings.append(("⛔ CRITICAL", "Hidden in Base64", f"Decoded payload contains: {desc}", "#e74c3c"))
+                        has_critical = True
+        except Exception:
+            pass
+
+    if has_critical:
+        verdict, verdict_color = "⛔ DO NOT INSTALL", "#e74c3c"
+    elif has_warning:
+        verdict, verdict_color = "⚠️ REVIEW MANUALLY", "#f39c12"
+
+    return verdict, verdict_color, findings
+
 
 class SecurityApp(Adw.Application):
     def __init__(self, **kwargs):
@@ -83,8 +178,11 @@ class SecurityApp(Adw.Application):
 
         stack_switcher = Gtk.StackSwitcher()
         stack_switcher.set_stack(self.stack)
-        stack_switcher.set_margin_bottom(10)
-        header.set_title_widget(stack_switcher)
+        switcher_scroll = Gtk.ScrolledWindow()
+        switcher_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        switcher_scroll.set_hexpand(True)
+        switcher_scroll.set_child(stack_switcher)
+        header.set_title_widget(switcher_scroll)
 
         # Universal safe clear: ListBox now holds ONLY result rows
         def clear_listbox(lb):
@@ -556,9 +654,125 @@ class SecurityApp(Adw.Application):
             button.set_sensitive(True)
 
         self.hardening_scan_btn.connect("clicked", run_hardening_scan)
+        
+        # =========================================================================
+        # TAB 10: PKGBUILD CHECKER
+        # =========================================================================
+        pkg_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        pkg_box.set_margin_start(10)
+        pkg_box.set_margin_end(10)
+        pkg_box.set_margin_top(10)
+        
+        pkg_header = Gtk.Label(label="Pre-Install PKGBUILD Security Gate", xalign=0)
+        pkg_box.append(pkg_header)
+
+        # Fetch row
+        fetch_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.pkg_name_entry = Gtk.Entry(placeholder_text="Enter AUR package name to fetch...", hexpand=True)
+        self.fetch_pkg_btn = Gtk.Button(label="Fetch from AUR")
+        fetch_row.append(self.pkg_name_entry)
+        fetch_row.append(self.fetch_pkg_btn)
+        pkg_box.append(fetch_row)
+
+        # Text view for pasting
+        self.pkgbuild_textview = Gtk.TextView()
+        self.pkgbuild_textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self.pkgbuild_buffer = self.pkgbuild_textview.get_buffer()
+        tv_scroll = Gtk.ScrolledWindow()
+        tv_scroll.set_min_content_height(150)
+        tv_scroll.set_max_content_height(150)
+        tv_scroll.set_child(self.pkgbuild_textview)
+        pkg_box.append(tv_scroll)
+
+        # Analyze button
+        self.analyze_pkg_btn = Gtk.Button(label="Analyze PKGBUILD")
+        self.analyze_pkg_btn.set_halign(Gtk.Align.START)
+        pkg_box.append(self.analyze_pkg_btn)
+
+        # Results area
+        self.pkg_results_listbox = Gtk.ListBox()
+        self.pkg_results_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        res_scroll = Gtk.ScrolledWindow(vexpand=True)
+        res_scroll.set_child(self.pkg_results_listbox)
+        pkg_box.append(res_scroll)
+
+        self.stack.add_titled(pkg_box, "pkgbuild", "PKGBUILD Checker")
+
+        # --- Tab 10 Logic ---
+        def fetch_pkg_clicked(btn):
+            name = self.pkg_name_entry.get_text().strip()
+            if not name: return
+            btn.set_sensitive(False)
+            btn.set_label("Fetching...")
+            def do_fetch():
+                try:
+                    res = subprocess.run(["curl", "-s", f"https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={name}"], capture_output=True, text=True, timeout=10)
+                    text = res.stdout if res.returncode == 0 and "404" not in res.stdout else f"# Error fetching {name}"
+                except Exception as e:
+                    text = f"# Error: {e}"
+                GLib.idle_add(update_textview, text, btn)
+            threading.Thread(target=do_fetch, daemon=True).start()
+
+        def update_textview(text, btn):
+            self.pkgbuild_buffer.set_text(text)
+            btn.set_label("Fetch from AUR")
+            btn.set_sensitive(True)
+
+        def analyze_pkg_clicked(btn):
+            btn.set_sensitive(False)
+            btn.set_label("Analyzing...")
+            clear_listbox(self.pkg_results_listbox)
+            
+            start_iter = self.pkgbuild_buffer.get_start_iter()
+            end_iter = self.pkgbuild_buffer.get_end_iter()
+            text = self.pkgbuild_buffer.get_text(start_iter, end_iter, True)
+
+            def do_analyze():
+                verdict, color, findings = analyze_pkgbuild_content(text)
+                GLib.idle_add(update_pkg_results, verdict, color, findings, btn)
+            threading.Thread(target=do_analyze, daemon=True).start()
+
+        def update_pkg_results(verdict, color, findings, btn):
+            # Verdict Banner
+            v_row = Gtk.ListBoxRow()
+            v_row.set_margin_top(10)
+            v_row.set_margin_bottom(10)
+            v_label = Gtk.Label(label=f"<span size='x-large' weight='bold' foreground='{color}'>{verdict}</span>", xalign=0.5, use_markup=True)
+            v_row.set_child(v_label)
+            self.pkg_results_listbox.append(v_row)
+
+            # Disclaimer
+            d_row = Gtk.ListBoxRow()
+            d_label = Gtk.Label(label="<span size='small' foreground='#7f8c8d' style='italic'>Note: Static analysis cannot defeat all obfuscation. 'Clean' means no known red flags.</span>", xalign=0.5, use_markup=True, wrap=True)
+            d_row.set_child(d_label)
+            self.pkg_results_listbox.append(d_row)
+
+            # Findings
+            for severity, title, desc, sev_color in findings:
+                row = Gtk.ListBoxRow()
+                row.set_margin_top(5)
+                row.set_margin_bottom(5)
+                row.set_margin_start(10)
+                row.set_margin_end(10)
+                row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                row_box.append(Gtk.Label(label=f"<span foreground='{sev_color}' weight='bold'>{severity} {title}</span>", xalign=0, use_markup=True))
+                row_box.append(Gtk.Label(label=desc, xalign=0, wrap=True))
+                row.set_child(row_box)
+                self.pkg_results_listbox.append(row)
+            
+            if not findings:
+                row = Gtk.ListBoxRow()
+                row.set_child(Gtk.Label(label="No specific red flags, high-entropy blobs, or provenance warnings found.", xalign=0, margin_top=10))
+                self.pkg_results_listbox.append(row)
+
+            btn.set_label("Analyze PKGBUILD")
+            btn.set_sensitive(True)
+
+        self.fetch_pkg_btn.connect("clicked", fetch_pkg_clicked)
+        self.analyze_pkg_btn.connect("clicked", analyze_pkg_clicked) 
 
         # =========================================================================
-        # TAB 10: SETTINGS
+        # TAB 11: SETTINGS
         # =========================================================================
         settings_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         settings_box.set_spacing(15)
@@ -605,9 +819,9 @@ class SecurityApp(Adw.Application):
             print("Refresh All triggered!")
 
         def clear_all_clicked(b):
-            for lb in [self.aur_listbox, self.net_listbox, self.sys_listbox, self.suid_listbox,
-                       self.auth_listbox, self.proc_listbox, self.systemd_listbox, self.code_listbox,
-                       self.hardening_listbox]:
+            for lb in [self.aur_listbox, self.net_listbox, self.sys_listbox, self.code_listbox,
+                       self.auth_listbox, self.proc_listbox, self.systemd_listbox, self.sys_listbox,
+                       self.suid_listbox, self.hardening_listbox, self.pkg_results_listbox]:
                 clear_listbox(lb)
             print("All results cleared!")
 

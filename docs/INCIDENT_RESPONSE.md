@@ -955,3 +955,42 @@ Privilege Escalation (LPE) and information disclosure attacks, but it cannot sto
 Furthermore, maximum hardening (e.g., ptrace_scope=3 or kptr_restrict=2) can break certain legitimate applications, debuggers, and 
 anti-cheat software. Always test sysctl changes in a non-production environment first, and document why a specific parameter was 
 relaxed if it deviates from the baseline.
+
+############################################################
+
+Tab 10: Pre-Install Supply Chain Analysis (The Gatekeeper)
+
+############################################################
+
+**Purpose:** To intercept malicious AUR packages *before* they execute code on your system.
+**When to use:** Before installing any new package from the AUR, especially those with few votes, new maintainers, or complex build systems (Rust, Go, CMake).
+
+### 1. The Threat Model
+A malicious PKGBUILD is a **Supply Chain Attack**. It compromises the system in two phases:
+1.  **The Build Phase (User-Level):** The `build()` function runs as your normal user. A malicious script here can silently steal `~/.ssh/id_rsa`, `~/.gnupg`, browser cookies, or inject backdoors into `~/.bashrc` without ever asking for `sudo`.
+2.  **The Install Phase (Root-Level):** If the package installs files to system directories, it can plant rootkits or SUID binaries.
+
+### 2. Analysis Protocol
+Paste the PKGBUILD content into **Tab 10** or fetch it by name.
+*   **⛔ DO NOT INSTALL:** If the verdict is Red. This indicates active malice (network callbacks, shell piping, privilege escalation).
+*   **⚠️ REVIEW MANUALLY:** If the verdict is Orange. This often indicates "messy" code, missing checksums (`SKIP`), or live git sources (`-git` packages) which can change code after you review it.
+*   **✅ LOOKS CLEAN:** No known signatures found. *Note: This does not guarantee safety against advanced obfuscation.*
+
+### 3. Incident Response: "I installed a malicious package"
+If you suspect a package you already installed was malicious:
+
+1.  **Immediate Removal:**
+    ```bash
+    sudo pacman -Rns <package-name>
+    ```
+2.  **Audit User Space (Critical):**
+    Since the build script ran as *you*, check for user-level persistence:
+    *   Check shell configs: `cat ~/.bashrc ~/.zshrc ~/.profile` (Look for added lines at the bottom).
+    *   Check SSH keys: `cat ~/.ssh/authorized_keys` (Look for unknown keys).
+    *   Check Cron: `crontab -l`
+    *   Check Autostart: `ls ~/.config/autostart/`
+3.  **Audit System Space:**
+    *   Run **Tab 4 (SUID)** to ensure no new root-privileged binaries were left behind.
+    *   Run **Tab 7 (Services)** to check for new systemd services.
+4.  **Community Action:**
+    *   **Flag the package** on the AUR website to warn others.

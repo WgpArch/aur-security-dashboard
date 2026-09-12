@@ -20,15 +20,14 @@ By running entirely locally and auditing your system's AUR packages, SUID binari
 
 The dashboard is divided into 9 specialized forensic tabs:
 
-1. **AUR Packages:** Audits Arch User Repository packages for outdated versions, orphaned dependencies, and typosquatting risks.
-2. **Network Connections:** Real-time visibility into active sockets, listening ports, and suspicious outbound connections.
-3. **System Integrity:** Cryptographic verification of system binaries against the official Arch package database to detect rootkits and tampering.
-4. **SUID/SGID Scanner:** Identifies unauthorized privilege escalation vectors and hidden backdoors.
-5. **Auth Monitor:** Analyzes `journalctl` logs to detect brute-force attacks, invalid user probes, and sudo anomalies.
-6. **Process Hunter:** Flags anomalous running processes, including those executing from writable directories (`/tmp`, `/dev/shm`) or mimicking system services.
-7. **Service Auditor:** Audits systemd units for failed services, unauthorized persistence, and misconfigured privileges.
-8. **Code Inspector:** Static analysis of AUR `PKGBUILD` scripts to detect supply chain attacks, obfuscated payloads, and malicious build commands.
-9. **Hardening Posture:** Evaluates live kernel security parameters (MAC, KASLR, ptrace scope, BPF JIT) to ensure the OS core is locked down.
+### 🛡️ Pre-Install Security Gate (Tab 10)
+Unlike standard package managers that install first and ask questions later, the AUR Security Dashboard includes a **Pre-Install PKGBUILD Checker**.
+*   **Static Analysis:** Scans PKGBUILD scripts for malicious patterns (`curl | bash`, `eval`, `chmod 4755`) before you build them.
+*   **Entropy Scoring:** Detects obfuscated payloads and high-entropy strings that hide inside "clean" looking scripts.
+*   **Recursive Decoding:** Automatically decodes base64 and hex blobs to inspect the hidden payload underneath.
+*   **Build-System Awareness:** Flags packages using Rust (`cargo`), CMake, or Go, alerting you to code that executes during the build process outside the PKGBUILD's direct control.
+
+![Tab 10: PKGBUILD Checker](docs/screenshot-2.png)
 
 ##  Incident Response Manual
 
@@ -43,15 +42,13 @@ This tool is designed to be part of a professional forensic workflow. A comprehe
 
 ## 📦 Installation & Usage
 
-> **Note:** This package is currently being prepared for official AUR submission. In the meantime, please use **Option 2** or **Option 3** below.
-
-### Option 1: AUR Installation (Coming Soon)
-Once submitted to the AUR, you can install the dashboard directly using your preferred AUR helper (e.g., `trizen`, `yay`, `paru`):
+```markdown
+### Option 1: AUR Installation (Recommended)
+The dashboard is officially available on the Arch User Repository (AUR). You can install and update it directly using your preferred AUR helper (e.g., `trizen`, `yay`, `paru`):
 ```bash
 trizen -S aur-security-dashboard
 # or
 yay -S aur-security-dashboard
-```
 
 ### Option 2: Manual Build & Install
 For those who prefer to build from source and review the PKGBUILD:

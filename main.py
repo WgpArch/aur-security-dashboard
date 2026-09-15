@@ -102,7 +102,7 @@ def analyze_pkgbuild_content(text):
     if build_systems:
         findings.append(("🔧 BUILD", "Toolchain Detected", f"{', '.join(build_systems)} executes code during build outside this PKGBUILD.", "#9b59b6"))
 
-    # 3. Red Flags (Critical)
+        # 3. Red Flags (Critical)
     red_flags = [
         (r'curl\s+.*\|\s*(ba)?sh', "Pipes curl directly to shell"),
         (r'wget\s+.*\|\s*(ba)?sh', "Pipes wget directly to shell"),
@@ -116,8 +116,40 @@ def analyze_pkgbuild_content(text):
     ]
     for pattern, desc in red_flags:
         if re.search(pattern, text):
-            findings.append(("⛔ CRITICAL", "Red Flag", desc, "#e74c3c"))
+            findings.append((" CRITICAL", "Red Flag", desc, "#e74c3c"))
             has_critical = True
+
+    # 3.5. v1.1.1 Threat Intel Signatures (Supply Chain Attacks)
+    threat_intel_signatures = {
+        "CRITICAL": [
+            (r"tailscale\s+up", "Tailscale tunnel initiation"),
+            (r"ngrok\s+http", "Ngrok tunnel initiation"),
+            (r"cloudflared\s+tunnel", "Cloudflare tunnel initiation"),
+            (r">>\s*~\/\.ssh\/authorized_keys", "SSH key persistence injection"),
+            (r"ssh-keygen\s+-t", "SSH key generation"),
+            (r"useradd.*-G.*(wheel|sudo)", "User creation with sudo/wheel group"),
+            (r"usermod.*-aG.*(wheel|sudo)", "User modification to add sudo/wheel group"),
+            (r"echo\s+['\"].*['\"]\s*\|\s*chpasswd", "Hardcoded password injection via chpasswd"),
+            (r"passwd\s+--stdin", "Hardcoded password injection via passwd --stdin")
+        ],
+        "HIGH": [
+            (r"sed\s+-i.*sshd_config", "SSHD configuration tampering"),
+            (r"PasswordAuthentication\s+yes", "Enabling SSH password authentication"),
+            (r"systemctl\s+enable\s+sshd", "Enabling SSHD service"),
+            (r"systemctl\s+start\s+sshd", "Starting SSHD service")
+        ]
+    }
+
+    for severity, patterns in threat_intel_signatures.items():
+        for pattern, desc in patterns:
+            if re.search(pattern, text):
+                color = "#e74c3c" if severity == "CRITICAL" else "#f39c12"
+                sev_label = f"⛔ {severity}" if severity == "CRITICAL" else f"⚠️ {severity}"
+                findings.append((sev_label, "Threat Intel Match", desc, color))
+                if severity == "CRITICAL":
+                    has_critical = True
+                else:
+                    has_warning = True
 
     # 4. Network in build()
     if re.search(r'build\(\)\s*\{.*?(curl|wget|nc\s)', text, re.DOTALL):

@@ -1,3 +1,14 @@
+## Phase 0.5: The "Never Trust a Workspace" Rule
+
+**The Threat:** Malware doesn't always live in the `PKGBUILD`. Attackers are increasingly poisoning upstream Git repositories with malicious `.vscode/tasks.json` files, `Makefile` hooks, or `pre-install` scripts. 
+*   **The Vector:** If you clone a malicious repo and open it in VSCode (or another IDE) and click **"Trust Workspace"**, the IDE may automatically execute the attacker's code *before you ever run makepkg*.
+*   **The Defense:** 
+1. **Never click "Trust"** on an unfamiliar AUR package's source code.
+2. Review unvetted PKGBUILDs and source code in a plain text editor (like `nano` or `vim`), or inside a disposable `
+systemd-nspawn` container.
+3. Use **Tab 10** to scan the `PKGBUILD` first. If it fetches from a live Git branch (`-git` packages) rather than a pinned 
+version tag, treat it with extreme suspicion, as the code can change after your review.
+
 ##################################################
 
 Incident Response Manual: Tab 1 - AUR Packages

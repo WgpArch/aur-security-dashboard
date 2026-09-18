@@ -363,6 +363,8 @@ class SecurityApp(Adw.Application):
             "/usr/lib/dbus-1.0/dbus-daemon-launch-helper", "/usr/lib/Xorg.wrap", "/usr/bin/Xorg.wrap", "/usr/bin/kmscon",
             "/usr/bin/ntfs-3g", "/usr/bin/expiry", "/usr/bin/chage", "/usr/lib/dbus-daemon-launch-helper",
             "/opt/vivaldi/vivaldi-sandbox", "/usr/lib/electron43/chrome-sandbox", "/usr/bin/ksu", "/usr/bin/unix_chkpwd",
+            "/usr/lib/electron44/chrome-sandbox",  
+            "/usr/bin/ksu", "/usr/bin/unix_chkpwd",
             "/usr/bin/wall", "/usr/bin/write", "/usr/lib/ssh/ssh-keysign"
         }
 

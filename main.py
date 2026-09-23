@@ -18,10 +18,11 @@ import json
 import math 
 import base64 
 
+
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, GLib, Adw
+from gi.repository import Gtk, GLib, Adw, Gdk
 
 
 def fetch_aur_packages():
@@ -214,7 +215,36 @@ class SecurityApp(Adw.Application):
         switcher_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
         switcher_scroll.set_hexpand(True)
         switcher_scroll.set_child(stack_switcher)
-        header.set_title_widget(switcher_scroll)
+
+        # Create a vertical box to force the tabs down
+        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        
+        # Use a plain Box as a spacer (no text, no hover effects)
+        spacer = Gtk.Box()
+        spacer.set_size_request(-1, 22)
+        title_box.append(spacer)
+        
+        title_box.append(switcher_scroll)
+
+        header.set_title_widget(title_box)
+
+        # Pin the horizontal scrollbar
+        css_provider = Gtk.CssProvider()
+        css = """
+        scrollbar.horizontal,
+        scrollbar.horizontal slider,
+        scrollbar.horizontal slider:hover,
+        scrollbar.horizontal slider:active,
+        scrollbar.horizontal slider:hover:active {
+            min-height: 2px;
+        }
+        """
+        try:
+            css_provider.load_from_data(css.encode(), -1)
+        except TypeError:
+            css_provider.load_from_data(css.encode())
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
         # Universal safe clear: ListBox now holds ONLY result rows
         def clear_listbox(lb):

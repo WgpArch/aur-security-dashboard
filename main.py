@@ -99,6 +99,10 @@ def analyze_pkgbuild_content(text):
     if "meson " in text: build_systems.append("Meson")
     if "go build" in text: build_systems.append("Go")
     if "pip install" in text or "python setup.py" in text: build_systems.append("Python/Pip")
+    # v1.1.4: Node.js supply chain detection (typosquatting/impersonation risk)
+    if "npm install" in text or "npm i " in text: build_systems.append("Node/NPM")
+    if "yarn install" in text or "yarn add" in text: build_systems.append("Node/Yarn")
+    if "pnpm install" in text or "pnpm add" in text: build_systems.append("Node/PNPM")
     
     if build_systems:
         findings.append(("🔧 BUILD", "Toolchain Detected", f"{', '.join(build_systems)} executes code during build outside this PKGBUILD.", "#9b59b6"))
@@ -131,13 +135,14 @@ def analyze_pkgbuild_content(text):
             (r"useradd.*-G.*(wheel|sudo)", "User creation with sudo/wheel group"),
             (r"usermod.*-aG.*(wheel|sudo)", "User modification to add sudo/wheel group"),
             (r"echo\s+['\"].*['\"]\s*\|\s*chpasswd", "Hardcoded password injection via chpasswd"),
-            (r"passwd\s+--stdin", "Hardcoded password injection via passwd --stdin")
+            (r"passwd\s+--stdin", "Hardcoded password injection via passwd --stdin"),
         ],
         "HIGH": [
             (r"sed\s+-i.*sshd_config", "SSHD configuration tampering"),
             (r"PasswordAuthentication\s+yes", "Enabling SSH password authentication"),
             (r"systemctl\s+enable\s+sshd", "Enabling SSHD service"),
-            (r"systemctl\s+start\s+sshd", "Starting SSHD service")
+            (r"systemctl\s+start\s+sshd", "Starting SSHD service"),
+            (r"(npm|yarn|pnpm)\s+(install|i|add)\b(?!.*--frozen-lockfile)", "Node dependency install without frozen lockfile"),
         ]
     }
 

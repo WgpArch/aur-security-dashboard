@@ -8,7 +8,7 @@ url="https://github.com/WgpArch/aur-security-dashboard"
 license=('GPL-3.0-only')
 depends=('python' 'python-gobject' 'gtk4')
 source=("${pkgname}-${pkgver}.tar.gz::https://github.com/WgpArch/aur-security-dashboard/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+sha256sums=('ce16b0b2da51152ce9d232804884373ced526d1b73bf1d87d902d57f6120923a')
 
 package() {
     # Tarballs extract to "pkgname-pkgver", not just "pkgname"

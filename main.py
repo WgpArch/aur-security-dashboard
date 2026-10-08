@@ -74,7 +74,28 @@ def shannon_entropy(data):
             entropy -= p * math.log2(p)
     return entropy
 
-def analyze_pkgbuild_content(text):
+# v1.1.5: .install post-install hook signatures
+INSTALL_SIGNATURES = {
+    "CRITICAL": [
+        (r"(curl|wget)\s+[^|\n]*\|\s*(sudo\s+)?(ba)?sh", "Remote script piped into a shell in install hook"),
+        (r"base64\s+(-d|--decode)\s*\|\s*(ba)?sh", "Base64 payload decoded and executed in install hook"),
+        (r"authorized_keys", "SSH authorized_keys touched by install hook (backdoor access)"),
+        (r"chmod\s+[^;\n]*[ug]\+s|chmod\s+[^;\n]*[24][0-7]{3}\b", "SUID/SGID bit planted by install hook"),
+        (r"ld\.so\.preload", "LD_PRELOAD hijack (intercepts every binary on the system)"),
+        (r"crontab|/etc/cron|/var/spool/cron", "Cron persistence installed by hook"),
+        (r"chattr\s+\+i", "Immutable flag used to lock/hide malicious files"),
+    ],
+    "HIGH": [
+        (r"\b(useradd|adduser)\b", "Install hook creates a user account"),
+        (r"\b(usermod|groupadd)\b", "Install hook modifies users/groups (privilege grant?)"),
+        (r"/etc/sudoers", "Install hook touches sudoers"),
+        (r"\bsetcap\b", "Install hook assigns capability bits"),
+        (r">>\s*/etc/(bashrc|profile|rc\.local)|/etc/profile\.d/", "Shell-startup persistence written by hook"),
+        (r"systemctl\s+(enable|start)\s+[^ \n]+", "Install hook enables/starts a service"),
+    ],
+}
+
+def analyze_pkgbuild_content(text, is_install=False):
     findings = []
     verdict = "✅ LOOKS CLEAN"
     verdict_color = "#2ecc71"
@@ -182,6 +203,21 @@ def analyze_pkgbuild_content(text):
                         has_critical = True
         except Exception:
             pass
+# 7. .install Hook Analysis (v1.1.5)
+    if is_install:
+        for severity, patterns in INSTALL_SIGNATURES.items():
+            for pattern, desc in patterns:
+                if re.search(pattern, text):
+                    color = "#e74c3c" if severity == "CRITICAL" else "#f39c12"
+                    sev_label = f"⛔ {severity}" if severity == "CRITICAL" else f"⚠️ {severity}"
+                    findings.append((sev_label, "Install Hook Match", desc, color))
+                    if severity == "CRITICAL":
+                        has_critical = True
+                    else:
+                        has_warning = True
+
+    if has_critical:
+        verdict, verdict_color = "⛔ DO NOT INSTALL", "#e74c3c"
 
     if has_critical:
         verdict, verdict_color = "⛔ DO NOT INSTALL", "#e74c3c"
@@ -190,6 +226,13 @@ def analyze_pkgbuild_content(text):
 
     return verdict, verdict_color, findings
 
+    return verdict, verdict_color, findings
+
+    return verdict, verdict_color, findings
+
+# v1.1.5 wrapper for .install hooks
+def analyze_install_content(text):
+    return analyze_pkgbuild_content(text, is_install=True)
 
 class SecurityApp(Adw.Application):
     def __init__(self, **kwargs):

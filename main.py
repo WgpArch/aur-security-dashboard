@@ -40,6 +40,24 @@ def fetch_aur_packages():
 
 CONFIG_DIR = os.path.expanduser("~/.config/aur-security-dashboard")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+CACHE_DIR = os.path.join(CONFIG_DIR, "pkgbuild_cache")
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+def get_pkgbuild_diff(pkg_name, new_content):
+    cache_file = os.path.join(CACHE_DIR, f"{pkg_name}.PKGBUILD")
+    if not os.path.exists(cache_file):
+        with open(cache_file, 'w') as f: f.write(new_content)
+        return "NEW_BASELINE", ""
+    with open(cache_file, 'r') as f: old_content = f.read()
+    if old_content == new_content: return "UNCHANGED", ""
+    import difflib
+    diff = list(difflib.unified_diff(old_content.splitlines(keepends=True), new_content.splitlines(keepends=True), fromfile="old", tofile="new", lineterm=""))
+    with open(cache_file, 'w') as f: f.write(new_content)
+    return "CHANGED", "".join(diff)
+
+def send_notification(title, message, urgency="normal"):
+    try: subprocess.run(["notify-send", "-u", urgency, "-a", "AUR Security Dashboard", title, message], check=False)
+    except Exception: pass
 
 
 def load_config():
@@ -104,8 +122,10 @@ def analyze_pkgbuild_content(text, is_install=False):
 
     # 1. Provenance & Hygiene
     if "sha256sums=('SKIP'" in text or 'sha256sums=("SKIP"' in text:
-        findings.append(("⚠️ WARNING", "Missing Checksums", "sha256sums contains 'SKIP'. Integrity cannot be verified.", "#f39c12"))
-        has_warning = True
+        is_pinned = bool(re.search(r"source=\([^)]*(#tag=|#commit=|\.git)", text))
+        if not is_pinned:
+            findings.append(("⚠️ WARNING", "Missing Checksums", "SKIP used without pinned git tag/commit.", "#f39c12"))
+            has_warning = True
     if ".install=" in text:
         findings.append(("⚠️ WARNING", "Install Script", "Package uses a custom .install script (post-install hooks).", "#f39c12"))
         has_warning = True
@@ -139,6 +159,11 @@ def analyze_pkgbuild_content(text, is_install=False):
         (r'/dev/shm/', "Writes to shared memory (/dev/shm)"),
         (r'~/.bashrc|~/.profile|~/.zshrc', "Modifies user shell profiles"),
         (r'/etc/systemd/', "Drops systemd service files"),
+        (r'\\x[0-9a-fA-F]{2}.*\\x[0-9a-fA-F]{2}', "Hex-escape obfuscation detected"),
+        (r'install\s+-m\s*4[0-7]{3}', "SUID bit planted via install command"),
+        (r'source=\([^)]*http://[^)]*\)', "Insecure HTTP source URL (no TLS)"),
+        (r'source=\([^)]*\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', "Raw IP address in source URL"),
+        (r'source=\([^)]*(pastebin|gist\.github\.com|ghostbin)', "Source fetched from ephemeral paste site"),
     ]
     for pattern, desc in red_flags:
         if re.search(pattern, text):
@@ -443,7 +468,8 @@ class SecurityApp(Adw.Application):
             "/opt/vivaldi/vivaldi-sandbox", "/usr/lib/electron43/chrome-sandbox", "/usr/bin/ksu", "/usr/bin/unix_chkpwd",
             "/usr/lib/electron44/chrome-sandbox",  
             "/usr/bin/ksu", "/usr/bin/unix_chkpwd",
-            "/usr/bin/wall", "/usr/bin/write", "/usr/lib/ssh/ssh-keysign"
+            "/usr/bin/wall", "/usr/bin/write", "/usr/lib/ssh/ssh-keysign",
+            "/usr/bin/mount.cifs",
         }
 
         def populate_suid(button=None):
@@ -581,6 +607,11 @@ class SecurityApp(Adw.Application):
                             threat_level, color, reason = "HIGH", "#e67e22", "Running from /var/tmp"
                         elif user == "root" and any(x in command for x in ["python", "bash", "/bin/sh"]) and "/usr/" not in command:
                             threat_level, color, reason = "MEDIUM", "#f39c12", "Root running script"
+                                               # v1.1.6: Deleted binary hunter
+                        try:
+                            if "(deleted)" in os.readlink(f"/proc/{pid}/exe"):
+                                threat_level, color, reason = "CRITICAL", "#e74c3c", "Binary deleted from disk (stealth malware)"
+                        except Exception: pass
                         if threat_level:
                             results.append((pid, user, command, threat_level, reason, color))
                 except Exception as e:
@@ -604,6 +635,7 @@ class SecurityApp(Adw.Application):
                         row_box.append(Gtk.Label(label=f"<span foreground='{color}' weight='bold'>[{threat_level}]</span> PID: {pid} | User: {user}", xalign=0, use_markup=True))
                         row_box.append(Gtk.Label(label=f"<span foreground='#bdc3c7'>{command}</span>", xalign=0, use_markup=True, max_width_chars=80, wrap=True))
                         row_box.append(Gtk.Label(label=f"<span foreground='{color}' style='italic'>{reason}</span>", xalign=0, use_markup=True))
+                        if threat_level == "CRITICAL": send_notification("CRITICAL Process", f"PID {pid}: {reason}", "critical")
                         row.set_child(row_box)
                         self.proc_listbox.append(row)
                 button.set_label("Rescan Processes")
@@ -819,7 +851,7 @@ class SecurityApp(Adw.Application):
             def do_fetch():
                 try:
                     res = subprocess.run(["curl", "-s", f"https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={name}"], capture_output=True, text=True, timeout=10)
-                    text = res.stdout if res.returncode == 0 and "404" not in res.stdout else f"# Error fetching {name}"
+                    text = res.stdout if res.returncode == 0 and "404" not in res.stdout and not res.stdout.lstrip().startswith("<") else f"# Error fetching {name} (enter only the package name, not a URL)"
                 except Exception as e:
                     text = f"# Error: {e}"
                 GLib.idle_add(update_textview, text, btn)
@@ -882,7 +914,61 @@ class SecurityApp(Adw.Application):
 
         self.fetch_pkg_btn.connect("clicked", fetch_pkg_clicked)
         self.analyze_pkg_btn.connect("clicked", analyze_pkg_clicked) 
+        # =========================================================================
+        # TAB 12: UPDATE DIFF
+        # =========================================================================
+        self.diff_listbox, self.diff_scan_btn = make_tab(
+            "PKGBUILD Change Detector:", "Scan Installed for Changes", "diff", "Update Diff")
 
+        def run_diff_scan(button):
+            button.set_sensitive(False)
+            button.set_label("Scanning...")
+            clear_listbox(self.diff_listbox)
+            def do_scan():
+                results = []
+                try:
+                    aur_result = subprocess.run(["pacman", "-Qm"], capture_output=True, text=True, timeout=5)
+                    aur_packages = [line.split()[0] for line in aur_result.stdout.strip().split('\n') if line.strip()]
+                    for pkg_name in aur_packages:
+                        try:
+                            fetch_result = subprocess.run(["curl", "-s", f"https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={pkg_name}"], capture_output=True, text=True, timeout=5)
+                            if fetch_result.returncode != 0 or "404" in fetch_result.stdout:
+                                results.append((pkg_name, "[SKIPPED]", "Could not fetch", "#95a5a6", ""))
+                                continue
+                            status, diff_text = get_pkgbuild_diff(pkg_name, fetch_result.stdout)
+                            if status == "CHANGED":
+                                results.append((pkg_name, "⛔ CHANGED", "Modified since last review", "#e74c3c", diff_text))
+                                send_notification("PKGBUILD Changed!", f"{pkg_name} modified upstream.", "critical")
+                            elif status == "NEW_BASELINE":
+                                results.append((pkg_name, "ℹ️ NEW", "Baseline recorded", "#3498db", ""))
+                            else:
+                                results.append((pkg_name, "✅ UNCHANGED", "No changes", "#2ecc71", ""))
+                        except Exception:
+                            results.append((pkg_name, "[ERROR]", "Fetch failed", "#e74c3c", ""))
+                except Exception as e:
+                    results.append(("Error", "ERROR", str(e), "#e74c3c", ""))
+                GLib.idle_add(update_diff_ui, results, button)
+            threading.Thread(target=do_scan, daemon=True).start()
+
+        def update_diff_ui(results, button):
+            for pkg, status, desc, color, diff in results:
+                row = Gtk.ListBoxRow()
+                row.set_margin_top(5)
+                row.set_margin_bottom(5)
+                row.set_margin_start(10)
+                row.set_margin_end(10)
+                row_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+                row_box.append(Gtk.Label(label=f"<span foreground='{color}' weight='bold'>{status}</span>  <b>{pkg}</b>  <span foreground='#bdc3c7'>{desc}</span>", xalign=0, use_markup=True))
+                if diff:
+                    diff_label = Gtk.Label(label=f"<span font_family='monospace' size='small'>{diff}</span>", xalign=0, use_markup=True, wrap=True, selectable=True)
+                    diff_label.set_margin_start(20)
+                    row_box.append(diff_label)
+                row.set_child(row_box)
+                self.diff_listbox.append(row)
+            button.set_label("Rescan for Changes")
+            button.set_sensitive(True)
+
+        self.diff_scan_btn.connect("clicked", run_diff_scan)
         # =========================================================================
         # TAB 11: SETTINGS
         # =========================================================================

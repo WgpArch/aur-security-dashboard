@@ -26,13 +26,24 @@ from gi.repository import Gtk, GLib, Adw, Gdk
 
 
 def fetch_aur_packages():
+    pkg_list = []
     try:
-        pacman_output = subprocess.run(["pacman", "-Qm"], capture_output=True, text=True, check=True)
-        pkg_list = []
-        for line in pacman_output.stdout.strip().split("\n"):
+        # 1. Get normal AUR (Foreign) packages
+        aur_res = subprocess.run(["pacman", "-Qm"], capture_output=True, text=True, check=True)
+        for line in aur_res.stdout.strip().split("\n"):
             if line:
                 name, version = line.split(" ", 1)
-                pkg_list.append({"name": name, "version": version})
+                pkg_list.append({"name": name, "version": version, "source": "AUR"})
+
+        # 2. Get Chaotic AUR packages (The "X-Ray" check)
+        chaotic_res = subprocess.run(["bash", "-c", "comm -12 <(pacman -Qq | sort) <(pacman -Sl chaotic-aur 2>/dev/null | awk '{print $2}' | sort)"], capture_output=True, text=True)
+        for name in chaotic_res.stdout.strip().split("\n"):
+            if name:
+                ver_res = subprocess.run(["pacman", "-Q", name], capture_output=True, text=True)
+                if ver_res.returncode == 0:
+                    version = ver_res.stdout.strip().split(" ", 1)[1]
+                    pkg_list.append({"name": name, "version": version, "source": "Chaotic"})
+        
         return pkg_list
     except Exception:
         return []
@@ -370,7 +381,8 @@ class SecurityApp(Adw.Application):
                     row.set_margin_start(10)
                     row.set_margin_end(10)
                     row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-                    row_box.append(Gtk.Label(label=pkg["name"], xalign=0, hexpand=False))
+                    badge = f" <span foreground='#9b59b6' size='small'>[Chaotic]</span>" if pkg.get("source") == "Chaotic" else ""
+                    row_box.append(Gtk.Label(label=f"{pkg['name']}{badge}", xalign=0, hexpand=False, use_markup=True))
                     row_box.append(Gtk.Label(label=pkg["version"], xalign=1))
                     row.set_child(row_box)
                     self.aur_listbox.append(row)

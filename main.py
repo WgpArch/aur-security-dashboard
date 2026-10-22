@@ -798,6 +798,23 @@ class SecurityApp(Adw.Application):
             bpf = read_file('/proc/sys/net/core/bpf_jit_harden')
             results.append(("BPF JIT Hardening", "Hardened" if bpf == '2' else "Default", "#2ecc71" if bpf == '2' else "#f39c12"))
 
+            # v1.1.8: eBPF program audit (Atomic Arch rootkit closer)
+            try:
+                bpftool_res = subprocess.run(["sudo", "-n", "bpftool", "prog", "show"], capture_output=True, text=True, timeout=8)
+                if bpftool_res.returncode != 0:
+                    results.append(("eBPF Programs", "bpftool needs passwordless sudo — see note", "#3498db"))
+                else:
+                    progs = [l for l in bpftool_res.stdout.splitlines() if re.match(r'\s*\d+:', l)]
+                    if not progs:
+                        results.append(("eBPF Programs", "None loaded — kernel BPF surface clean", "#2ecc71"))
+                    else:
+                        names = ", ".join((re.search(r'name\s+(\S+)', l) or [None, "?"])[1] for l in progs[:8])
+                        results.append(("eBPF Programs", f"{len(progs)} loaded — verify each is legitimate ({names})", "#f39c12"))
+            except FileNotFoundError:
+                results.append(("eBPF Programs", "bpftool not installed (pacman -S bpf)", "#3498db"))
+            except Exception:
+                results.append(("eBPF Programs", "Audit unavailable", "#3498db"))
+
             for name, status, color in results:
                 row = Gtk.ListBoxRow()
                 row.set_margin_top(5)

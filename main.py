@@ -357,10 +357,11 @@ class SecurityApp(Adw.Application):
             scrolled.set_child(lb)
             box.append(scrolled)
             self.stack.add_titled(box, tab_id, tab_name)
-            return lb, btn
+            return lb, btn  
+            
 
         # =========================================================================
-        # TAB 1: AUR PACKAGES
+        # WINDOW FINALIZATION & STARTUP SCANS
         # =========================================================================
         self.aur_listbox, self.aur_scan_btn = make_tab(
             "Installed AUR Packages:", "Rescan AUR Packages", "aur", "AUR Packages")
@@ -1078,19 +1079,68 @@ class SecurityApp(Adw.Application):
         actions_row.append(export_btn)
         settings_box.append(actions_row)
 
-        info_label = Gtk.Label(label="System Information", xalign=0, margin_top=20, margin_bottom=10)
+        # v1.1.9: Threat Intel Feeds Section
+        intel_label = Gtk.Label(label="Threat Intel Feeds", xalign=0, margin_top=30, margin_bottom=10)
+        settings_box.append(intel_label)
+
+        intel_grid = Gtk.Grid()
+        intel_grid.set_column_spacing(15)
+        intel_grid.set_row_spacing(8)
+        intel_grid.set_margin_start(10)
+        
+        feeds = [
+            ("Arch Security List", "https://lists.archlinux.org/listinfo/arch-security"),
+            ("AUR General List", "https://lists.archlinux.org/listinfo/aur-general"),
+            ("AUR Dev List", "https://lists.archlinux.org/listinfo/aur-dev"),
+            ("Datadog Sec Labs", "https://securitylabs.datadoghq.com/"),
+            ("Elastic Sec Labs", "https://www.elastic.co/security-labs"),
+            ("Sandfly Security", "https://sandflysecurity.com/blog/"),
+            ("AUR Issues Thread", "https://bbs.archlinux.org/viewforum.php?id=48"),
+            ("Socket.dev", "https://socket.dev/"),
+            ("The DFIR Report", "https://thedfirreport.com/"),
+            ("MITRE ATT&CK Linux", "https://attack.mitre.org/matrices/enterprise/linux/")
+        ]
+        
+        for i, (name, url) in enumerate(feeds):
+            row = i // 2
+            col = (i % 2) * 2
+            
+            btn = Gtk.Button(label=name)
+            btn.set_halign(Gtk.Align.START)
+            btn.connect("clicked", lambda b, u=url: subprocess.run(["xdg-open", u]))
+            
+            intel_grid.attach(btn, col, row, 1, 1)
+            
+            for i, (name, url) in enumerate(feeds):
+            	row = i // 2
+            col = (i % 2) * 2
+            
+            btn = Gtk.Button(label=name)
+            btn.set_halign(Gtk.Align.START)
+            btn.connect("clicked", lambda b, u=url: subprocess.run(["xdg-open", u]))
+            
+            intel_grid.attach(btn, col, row, 1, 1)
+
+        settings_box.append(intel_grid)
+
+        info_label = Gtk.Label(label="System Information", xalign=0, margin_top=30, margin_bottom=10)
+            
+        settings_box.append(intel_grid)
+
+        info_label = Gtk.Label(label="System Information", xalign=0, margin_top=30, margin_bottom=10)
         settings_box.append(info_label)
 
-        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)  # ← Add this
         info_box.append(Gtk.Label(label=f"Hostname: {platform.node()}", xalign=0))
         info_box.append(Gtk.Label(label=f"Kernel: {platform.release()}", xalign=0))
         try:
-            uptime_res = subprocess.run(["uptime", "-p"], capture_output=True, text=True)
-            info_box.append(Gtk.Label(label=f"Uptime: {uptime_res.stdout.strip().replace('up ', '')}", xalign=0))
-        except Exception:
-            pass
-        settings_box.append(info_box)
-        self.stack.add_titled(settings_box, "settings", "Settings")
+          uptime_res = subprocess.run(["uptime", "-p"], capture_output=True, text=True)  
+          info_box.append(Gtk.Label(label=f"Uptime: {uptime_res.stdout.strip().replace('up ', '')}", xalign=0)) 
+        except Exception:  # ← same level as 'try'
+          pass
+          
+        self.stack.add_titled(settings_box, "settings", "Settings") 
+  
 
         # =========================================================================
         # WINDOW FINALIZATION & STARTUP SCANS

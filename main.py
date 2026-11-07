@@ -275,6 +275,29 @@ class SecurityApp(Adw.Application):
         super().__init__(**kwargs, application_id="com.archhack.aursecurity")
         self.connect("activate", self.on_activate)
 
+        # Inject dark theme CSS for feed buttons (GTK4)
+        css_provider = Gtk.CssProvider()
+        css_provider.load_from_data(b"""
+            .feed-button {
+                background-color: #1e1e2e;
+                color: #cdd6f4;
+                border: 1px solid #414868;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-family: monospace;
+            }
+            .feed-button:hover {
+                background-color: #313244;
+            }
+        """)
+        display = Gdk.Display.get_default()
+        if display:
+            Gtk.StyleContext.add_provider_for_display(
+                display,
+                css_provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+
     def on_activate(self, app):
         self.win = Gtk.ApplicationWindow(application=app)
         self.win.set_title("AUR Security Dashboard")
@@ -1095,7 +1118,7 @@ class SecurityApp(Adw.Application):
             ("Datadog Sec Labs", "https://securitylabs.datadoghq.com/"),
             ("Elastic Sec Labs", "https://www.elastic.co/security-labs"),
             ("Sandfly Security", "https://sandflysecurity.com/blog/"),
-            ("AUR Issues Thread", "https://bbs.archlinux.org/viewforum.php?id=48"),
+            ("AUR Issues & Requests", "https://aur.archlinux.org/packages/?O=0&SeB=nd&K=&outdated=&SB=n&SO=a&PP=50&do_Search=Go"),
             ("Socket.dev", "https://socket.dev/"),
             ("The DFIR Report", "https://thedfirreport.com/"),
             ("MITRE ATT&CK Linux", "https://attack.mitre.org/matrices/enterprise/linux/")
@@ -1111,13 +1134,6 @@ class SecurityApp(Adw.Application):
             
             intel_grid.attach(btn, col, row, 1, 1)
             
-            for i, (name, url) in enumerate(feeds):
-            	row = i // 2
-            col = (i % 2) * 2
-            
-            btn = Gtk.Button(label=name)
-            btn.set_halign(Gtk.Align.START)
-            btn.connect("clicked", lambda b, u=url: subprocess.run(["xdg-open", u]))
             
             intel_grid.attach(btn, col, row, 1, 1)
 

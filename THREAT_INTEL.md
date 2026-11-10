@@ -11,6 +11,12 @@
 | Date | Source | Technique / IOC | Maps To Tab | Status | Notes |
 |------|--------|-----------------|-------------|--------|-------|
 | 2026-10-28 | Reddit / Atomic Arch | eBPF rootkit hiding processes/network | Tab 9 (Hardening) + Tab 6 (Process Hunter) | ✅ Implemented v1.1.8 | Added bpftool prog show audit |
+## Technique Backlog
+| Date | Source | Technique / IOC | Maps To Tab | Status | Notes |
+|------|--------|-----------------|-------------|--------|-------|
+| 2026-11-10 | Sandfly Security / Destination Linux Podcast | Encrypted payloads + memfd fileless loading | Tab 6 (Process Hunter) | ✅ Implemented v1.1.10-patch1 | Added memfd_create() detection; encrypted payloads detectable via runtime behavior |
+| 2026-10-28 | Reddit / Atomic Arch | eBPF rootkit hiding processes/network | Tab 9 (Hardening) + Tab 6 (Process Hunter) | ✅ Implemented v1.1.8 | Added bpftool prog show audit |
+| 2026-10-28 | Self-Diagnosis | Waybar polling causing thermal hunting | N/A (Ops) | ✅ Resolved | Raised interval 2s → 10s |
 | 2026-10-28 | Self-Diagnosis | Waybar polling causing thermal hunting | N/A (Ops) | ✅ Resolved | Raised interval 2s → 10s |
 
 ## How to Add New Entries

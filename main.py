@@ -123,6 +123,22 @@ INSTALL_SIGNATURES = {
         (r"systemctl\s+(enable|start)\s+[^ \n]+", "Install hook enables/starts a service"),
     ],
 }
+def is_memfd_process(pid):
+    """Detect processes loaded via memfd_create() - common in fileless Linux attacks per Sandfly Intel"""
+    try:
+        exe_link = os.readlink(f"/proc/{pid}/exe")
+        # memfd files appear as "/memfd:<name> (deleted)" in /proc/PID/exe
+        if exe_link.startswith("/memfd:"):
+            return True
+        # Also check cmdline for memfd indicators in encrypted payload loaders
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmdline = f.read().decode("utf-8", errors="ignore")
+            if "memfd" in cmdline.lower() and "deleted" in exe_link:
+                return True
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
+        pass
+    return False
+
 
 def analyze_pkgbuild_content(text, is_install=False):
     findings = []
@@ -643,10 +659,15 @@ class SecurityApp(Adw.Application):
                             threat_level, color, reason = "HIGH", "#e67e22", "Running from /var/tmp"
                         elif user == "root" and any(x in command for x in ["python", "bash", "/bin/sh"]) and "/usr/" not in command:
                             threat_level, color, reason = "MEDIUM", "#f39c12", "Root running script"
-                                               # v1.1.6: Deleted binary hunter
+                                                                       # v1.1.6: Deleted binary hunter
+                        # v1.1.10-patch1: memfd fileless loader detection (Sandfly Intel)
                         try:
-                            if "(deleted)" in os.readlink(f"/proc/{pid}/exe"):
-                                threat_level, color, reason = "CRITICAL", "#e74c3c", "Binary deleted from disk (stealth malware)"
+                            exe_link = os.readlink(f"/proc/{pid}/exe")
+                            if "(deleted)" in exe_link:
+                                if is_memfd_process(pid):
+                                    threat_level, color, reason = "CRITICAL", "#e74c3c", "memfd fileless loader detected (encrypted payload)"
+                                else:
+                                    threat_level, color, reason = "CRITICAL", "#e74c3c", "Binary deleted from disk (stealth malware)"
                         except Exception: pass
                         if threat_level:
                             results.append((pid, user, command, threat_level, reason, color))

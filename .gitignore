@@ -3,3 +3,7 @@ src/
 *.pkg.tar.zst
 *.tar.gz
 *.log
+__pycache__/
+*.so
+*.sarif
+reports/

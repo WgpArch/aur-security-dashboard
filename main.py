@@ -7,6 +7,8 @@ Maintainer: WgpArch
 Purpose: Monitor system integrity, audit AUR packages, and hunt anomalies.
 """
 
+import sarif_output
+import ctypes
 import sys
 import subprocess
 import threading
@@ -18,6 +20,19 @@ import json
 import math 
 import base64 
 
+# --- Rust Performance Layer Integration ---
+rust_scanner = None
+try:
+    import importlib.util
+    lib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "libaur_scan.so")
+    if os.path.exists(lib_path):
+        spec = importlib.util.spec_from_file_location("aur_scan", lib_path)
+        if spec and spec.loader:
+            rust_scanner = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(rust_scanner)
+            print("✅ Rust scanner loaded successfully.")
+except Exception as e:
+    print(f"Note: Rust scanner not loaded ({e}). Using Python fallback.")
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -139,41 +154,239 @@ def is_memfd_process(pid):
         pass
     return False
 
+def resolve_pkgbuild_vars(text):
+    """Resolve common PKGBUILD variables for accurate static analysis.
+    
+    Handles: $pkgname, ${pkgver}, ${pkgrel}, $srcdir, $pkgdir, $startdir,
+             ${source[@]}, ${md5sums[@]}, and nested ${var_${suffix}} patterns.
+    Returns resolved text; undefined variables are left as-is to avoid false negatives.
+    """
+    # Default safe values for unassigned variables (mirrors makepkg behavior)
+    defaults = {
+        'pkgname': 'unknown',
+        'pkgver': '0',
+        'pkgrel': '1',
+        'epoch': '',
+        'srcdir': '/tmp/makepkg-src',
+        'pkgdir': '/tmp/makepkg-pkg',
+        'startdir': '.',
+        'BUILDDIR': '/tmp/makepkg-build',
+    }
+    
+    # Extract assigned variables from the PKGBUILD text itself
+    assignments = {}
+    for match in re.finditer(r'^([A-Za-z_][A-Za-z0-9_]*)=(.+)$', text, re.MULTILINE):
+        key, val = match.group(1), match.group(2).strip().strip("'\"")
+        assignments[key] = val
+    
+    # Merge with defaults (assigned vars take precedence)
+    resolved = {**defaults, **assignments}
+    
+    # Resolve nested variable references iteratively (max 3 passes to prevent infinite loops)
+    result = text
+    for _ in range(3):
+        new_result = re.sub(
+            r'\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?(\[@\])?',
+            lambda m: resolved.get(m.group(1), m.group(0)),
+            result
+        )
+        if new_result == result:
+            break
+        result = new_result
+
+
+def load_detection_catalog():
+    """Load detection rules from detection_catalog.toml."""
+    import tomllib
+    catalog_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "detection_catalog.toml")
+    
+    if not os.path.exists(catalog_path):
+        return [] 
+        
+    try:
+        with open(catalog_path, "rb") as f:
+            data = tomllib.load(f)
+        
+        rules = []
+        for code, details in data.items():
+            rules.append({
+                "code": code,
+                "name": details.get("name", "Unknown"),
+                "severity": details.get("severity", "INFO"),
+                "category": details.get("category", "General"),
+                "cwe": details.get("cwe", "N/A"),
+                "pattern": re.compile(details["pattern"]),
+                "description": details.get("description", "")
+            })
+        return rules
+    except Exception as e:
+        print(f"Warning: Failed to load detection catalog: {e}")
+        return []
+
+def decode_obfuscated_strings(text):
+    r"""Decode base64, hex escapes, and octal sequences in PKGBUILD text.
+
+    Returns: tuple(original_text, decoded_text)
+    - original_text: unmodified input (for baseline scanning)
+    - decoded_text: with all detected obfuscation layers resolved
+
+    Handles nested obfuscation (e.g., base64-encoded \xNN sequences).
+    Skips decoding if no patterns detected (zero-cost for clean PKGBUILDs).
+    Never raises exceptions on malformed input — returns original text as fallback.
+    """
+    import base64
+    import re
+
+    decoded = text
+    
+    # 1. Hex Escape Decoding (\xNN)
+    try:
+        def replace_hex(m):
+            try: return chr(int(m.group(1), 16))
+            except: return m.group(0)
+        decoded = re.sub(r'\\x([0-9a-fA-F]{2})', replace_hex, decoded)
+    except: pass
+
+    # 2. Octal Escape Decoding (\NNN)
+    try:
+        def replace_oct(m):
+            try: return chr(int(m.group(1), 8))
+            except: return m.group(0)
+        decoded = re.sub(r'\\([0-7]{3})', replace_oct, decoded)
+    except: pass
+
+    # 3. Base64 Decoding (looks for long alphanumeric strings)
+    try:
+        b64_pattern = r'[A-Za-z0-9+/]{20,}={0,2}'
+        def replace_b64(m):
+            try: 
+                val = base64.b64decode(m.group(0)).decode('utf-8', errors='ignore')
+                return val if all(c.isprintable() or c.isspace() for c in val) else m.group(0)
+            except: return m.group(0)
+        decoded = re.sub(b64_pattern, replace_b64, decoded)
+    except: pass
+
+    return (text, decoded)
+
+def is_typosquat(pkg_name):
+    """Check if a package name is a potential typosquat of an official repo package."""
+    import difflib
+    
+    # Cache official packages to avoid repeated pacman calls
+    cache_file = os.path.expanduser("~/.cache/aur-security-dashboard/official_pkgs.txt")
+    os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+    
+    official_pkgs = []
+    if os.path.exists(cache_file) and (time.time() - os.path.getmtime(cache_file)) < 604800: # 7 days
+        with open(cache_file, 'r') as f:
+            official_pkgs = [line.strip() for line in f if line.strip()]
+    else:
+        try:
+            result = subprocess.run(['pacman', '-Sl', 'core', 'extra', 'multilib'], 
+                                    capture_output=True, text=True, timeout=10)
+            official_pkgs = [line.split()[1] for line in result.stdout.splitlines() if line]
+            with open(cache_file, 'w') as f:
+                f.write('\n'.join(official_pkgs))
+        except:
+            return False # Fail silently if pacman fails
+
+    # Check for high similarity using SequenceMatcher
+    for official in official_pkgs:
+        if pkg_name == official:
+            return False # It's an exact match, not a typosquat
+        ratio = difflib.SequenceMatcher(None, pkg_name, official).ratio()
+        if ratio > 0.85: # 85% similarity threshold
+            return True
+            
+    return False
 
 def analyze_pkgbuild_content(text, is_install=False):
+    # --- Phase 1: De-obfuscation & Resolution ---
+    resolved_text = resolve_pkgbuild_vars(text)
+    original_decoded, decoded_text = decode_obfuscated_strings(resolved_text)
+
     findings = []
     verdict = "✅ LOOKS CLEAN"
     verdict_color = "#2ecc71"
     has_critical = False
     has_warning = False
-
-    # 1. Provenance & Hygiene
-    if "sha256sums=('SKIP'" in text or 'sha256sums=("SKIP"' in text:
-        is_pinned = bool(re.search(r"source=\([^)]*(#tag=|#commit=|\.git)", text))
-        if not is_pinned:
-            findings.append(("⚠️ WARNING", "Missing Checksums", "SKIP used without pinned git tag/commit.", "#f39c12"))
+    # --- Phase 1.5: Typosquatting Check ---
+    pkg_name_match = re.search(r'^pkgname\s*=\s*[\'"]?([^\'"\s]+)', text, re.MULTILINE)
+    if pkg_name_match:
+        pkg_name = pkg_name_match.group(1)
+        if is_typosquat(pkg_name):
+            findings.append(("⚠️ WARNING", "Typosquat Risk", f"'{pkg_name}' is suspiciously similar to an official package.", "#f39c12"))
             has_warning = True
-    if ".install=" in text:
-        findings.append(("⚠️ WARNING", "Install Script", "Package uses a custom .install script (post-install hooks).", "#f39c12"))
-        has_warning = True
-    if re.search(r'source=\(.*git\+', text) or re.search(r'source=\(.*\.git\b', text):
-         findings.append(("ℹ️ INFO", "VCS Package", "Source is a live git repo. Code can change after this review.", "#3498db"))
-
-    # 2. Build System Detection
-    build_systems = []
-    if "cargo " in text or "cargo build" in text: build_systems.append("Rust/Cargo")
-    if "cmake " in text or "cmake .." in text: build_systems.append("CMake")
-    if "ninja" in text: build_systems.append("Ninja")
-    if "meson " in text: build_systems.append("Meson")
-    if "go build" in text: build_systems.append("Go")
-    if "pip install" in text or "python setup.py" in text: build_systems.append("Python/Pip")
-    # v1.1.4: Node.js supply chain detection (typosquatting/impersonation risk)
-    if "npm install" in text or "npm i " in text: build_systems.append("Node/NPM")
-    if "yarn install" in text or "yarn add" in text: build_systems.append("Node/Yarn")
-    if "pnpm install" in text or "pnpm add" in text: build_systems.append("Node/PNPM")
+    # --- Phase 3: SARIF Report Generation ---
+    import sarif_output
+    import datetime
     
-    if build_systems:
-        findings.append(("🔧 BUILD", "Toolchain Detected", f"{', '.join(build_systems)} executes code during build outside this PKGBUILD.", "#9b59b6"))
+    pkg_name = "unknown"
+    if pkg_name_match:
+        pkg_name = pkg_name_match.group(1)
+    
+    # Ensure report directory exists
+    report_dir = os.path.expanduser("~/.local/share/aur-security-dashboard/reports")
+    os.makedirs(report_dir, exist_ok=True)
+    
+    # Generate and save SARIF file
+    timestamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    sarif_file = os.path.join(report_dir, f"{pkg_name}-{timestamp}.sarif")
+    
+    try:
+        with open(sarif_file, 'w') as f:
+            f.write(sarif_output.generate_sarif(findings, pkg_name))
+    except Exception as e:
+        print(f"Warning: Could not save SARIF report: {e}")
+
+    # --- Phase 4: Final Verdict Logic ---
+    if has_critical:
+        verdict = "🔴 MALICIOUS PATTERNS DETECTED"
+        verdict_color = "#e74c3c"
+    elif has_warning:
+        verdict = "⚠️ SUSPICIOUS ACTIVITY"
+        verdict_color = "#f39c12"
+        
+    return verdict, verdict_color, findings
+
+    # --- Phase 2: Scanning Loop ---
+    # --- Phase 2: Scanning Loop ---
+    texts_to_scan = [
+        ("Original", text), 
+        ("Resolved/Decoded", decoded_text)
+    ]
+    
+    for source_name, scan_text in texts_to_scan:
+        # 1. Provenance & Hygiene (Only run on 'Original' to avoid duplicate warnings)
+        if source_name == "Original":
+            if "sha256sums=('SKIP'" in scan_text or 'sha256sums=("SKIP"' in scan_text:
+                is_pinned = bool(re.search(r"source=\([^)]*(#tag=|#commit=|\.git)", scan_text))
+                if not is_pinned:
+                    findings.append(("⚠️ WARNING", "Missing Checksums", "SKIP used without pinned git tag/commit.", "#f39c12"))
+                    has_warning = True
+            if ".install=" in scan_text:
+                findings.append(("⚠️ WARNING", "Install Script", "Package uses a custom .install script (post-install hooks).", "#f39c12"))
+                has_warning = True
+            if re.search(r'source=\(.*git\+', scan_text) or re.search(r'source=\(.*\.git\b', scan_text):
+                 findings.append(("ℹ️ INFO", "VCS Package", "Source is a live git repo. Code can change after this review.", "#3498db"))
+
+        # 2. Build System Detection (Run on BOTH to catch obfuscated build calls)
+        build_systems = []
+        if "cargo " in scan_text or "cargo build" in scan_text: build_systems.append("Rust/Cargo")
+        if "cmake " in scan_text or "cmake .." in scan_text: build_systems.append("CMake")
+        if "ninja" in scan_text: build_systems.append("Ninja")
+        if "meson " in scan_text: build_systems.append("Meson")
+        if "go build" in scan_text: build_systems.append("Go")
+        if "pip install" in scan_text or "python setup.py" in scan_text: build_systems.append("Python/Pip")
+        # v1.1.4: Node.js supply chain detection
+        if "npm install" in scan_text or "npm i " in scan_text: build_systems.append("Node/NPM")
+        if "yarn install" in scan_text or "yarn add" in scan_text: build_systems.append("Node/Yarn")
+        if "pnpm install" in scan_text or "pnpm add" in scan_text: build_systems.append("Node/PNPM")
+
+        if build_systems:
+            # Avoid duplicate build system findings
+            if not any(f[1] == "Toolchain Detected" for f in findings):
+                findings.append(("🔧 BUILD", "Toolchain Detected", f"{', '.join(build_systems)} executes code during build outside this tool's view.", "#3498db"))
 
         # 3. Red Flags (Critical)
     red_flags = [

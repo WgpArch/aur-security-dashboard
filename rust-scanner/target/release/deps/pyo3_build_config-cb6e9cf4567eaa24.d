@@ -1,0 +1,14 @@
+/home/wgparch/.dotfiles/aur-security-dashboard/rust-scanner/target/release/deps/pyo3_build_config-cb6e9cf4567eaa24.d: /home/wgparch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/lib.rs /home/wgparch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/errors.rs /home/wgparch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/impl_.rs /home/wgparch/.dotfiles/aur-security-dashboard/rust-scanner/target/release/build/pyo3-build-config-2ac5f96efbe9ed11/out/pyo3-build-config-file.txt /home/wgparch/.dotfiles/aur-security-dashboard/rust-scanner/target/release/build/pyo3-build-config-2ac5f96efbe9ed11/out/pyo3-build-config.txt
+
+/home/wgparch/.dotfiles/aur-security-dashboard/rust-scanner/target/release/deps/libpyo3_build_config-cb6e9cf4567eaa24.rlib: /home/wgparch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/lib.rs /home/wgparch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/errors.rs /home/wgparch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/impl_.rs /home/wgparch/.dotfiles/aur-security-dashboard/rust-scanner/target/release/build/pyo3-build-config-2ac5f96efbe9ed11/out/pyo3-build-config-file.txt /home/wgparch/.dotfiles/aur-security-dashboard/rust-scanner/target/release/build/pyo3-build-config-2ac5f96efbe9ed11/out/pyo3-build-config.txt
+
+/home/wgparch/.dotfiles/aur-security-dashboard/rust-scanner/target/release/deps/libpyo3_build_config-cb6e9cf4567eaa24.rmeta: /home/wgparch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/lib.rs /home/wgparch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/errors.rs /home/wgparch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/impl_.rs /home/wgparch/.dotfiles/aur-security-dashboard/rust-scanner/target/release/build/pyo3-build-config-2ac5f96efbe9ed11/out/pyo3-build-config-file.txt /home/wgparch/.dotfiles/aur-security-dashboard/rust-scanner/target/release/build/pyo3-build-config-2ac5f96efbe9ed11/out/pyo3-build-config.txt
+
+/home/wgparch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/lib.rs:
+/home/wgparch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/errors.rs:
+/home/wgparch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-build-config-0.23.5/src/impl_.rs:
+/home/wgparch/.dotfiles/aur-security-dashboard/rust-scanner/target/release/build/pyo3-build-config-2ac5f96efbe9ed11/out/pyo3-build-config-file.txt:
+/home/wgparch/.dotfiles/aur-security-dashboard/rust-scanner/target/release/build/pyo3-build-config-2ac5f96efbe9ed11/out/pyo3-build-config.txt:
+
+# env-dep:CARGO_PKG_VERSION=0.23.5
+# env-dep:OUT_DIR=/home/wgparch/.dotfiles/aur-security-dashboard/rust-scanner/target/release/build/pyo3-build-config-2ac5f96efbe9ed11/out

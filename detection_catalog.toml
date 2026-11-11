@@ -1,0 +1,12 @@
+[package]
+name = "rust-scanner"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "aur_scan"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module"] }
+regex = "1.10"

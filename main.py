@@ -7,6 +7,10 @@ Maintainer: WgpArch
 Purpose: Monitor system integrity, audit AUR packages, and hunt anomalies.
 """
 
+# Suppress GTK4 deprecation warnings for FileChooserNative
+import warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning, module='gi.repository.Gtk')
+
 import sarif_output
 import ctypes
 import sys
@@ -58,6 +62,8 @@ def fetch_aur_packages():
                 if ver_res.returncode == 0:
                     version = ver_res.stdout.strip().split(" ", 1)[1]
                     pkg_list.append({"name": name, "version": version, "source": "Chaotic"})
+
+
         
         return pkg_list
     except Exception:
@@ -369,21 +375,93 @@ def analyze_pkgbuild_content(text, is_install=False):
                 has_warning = True
             if re.search(r'source=\(.*git\+', scan_text) or re.search(r'source=\(.*\.git\b', scan_text):
                  findings.append(("ℹ️ INFO", "VCS Package", "Source is a live git repo. Code can change after this review.", "#3498db"))
+def analyze_workflow_content(text):
+    """Analyze GitHub Actions YAML for supply chain threats."""
+    findings = []
+    verdict = "✅ LOOKS CLEAN"
+    verdict_color = "#2ecc71"
+    has_critical = False
+    has_warning = False
+
+    # CI-001: Secret exfiltration via curl/wget pipe to shell
+    if re.search(r'(curl|wget)\s+.*\|\s*(ba)?sh', text, re.IGNORECASE):
+        findings.append(("🔴 CRITICAL", "[CI-001] Secret Exfiltration",
+                        "Curl/wget piped to shell detected in workflow.", "#e74c3c"))
+        has_critical = True
+
+    # CI-002: Overly permissive GITHUB_TOKEN
+    if re.search(r'permissions:\s*write-all', text, re.IGNORECASE):
+        findings.append(("⚠️ WARNING", "[CI-002] Overly Permissive Token",
+                        "GITHUB_TOKEN has write-all permissions.", "#f39c12"))
+        has_warning = True
+
+    # CI-003: Unpinned third-party actions
+    if re.search(r'uses:\s+\S+@(?!sha256:)[a-zA-Z]', text):
+        findings.append(("⚠️ WARNING", "[CI-003] Unpinned Action",
+                        "Third-party action not pinned to SHA.", "#f39c12"))
+        has_warning = True
+
+    # CI-004: Hardcoded secrets (basic heuristic)
+    hardcoded_patterns = [
+        r'(?:password|passwd|pwd)\s*[:=]\s*[\'"][^$][^\'"]{8,}[\'"]',
+        r'(?:api[_-]?key|apikey)\s*[:=]\s*[\'"][A-Za-z0-9]{20,}[\'"]',
+        r'(?:token|secret)\s*[:=]\s*[\'"][A-Za-z0-9+/]{20,}={0,2}[\'"]',
+    ]
+    for pattern in hardcoded_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            findings.append(("🔴 CRITICAL", "[CI-004] Hardcoded Secret",
+                            "Potential hardcoded credential found in workflow.", "#e74c3c"))
+            has_critical = True
+            break
+
+    # CI-005: PR trigger with write access
+    if re.search(r'on:\s*\n\s*pull_request', text, re.IGNORECASE) and \
+       re.search(r'permissions:\s*write', text, re.IGNORECASE):
+        findings.append(("⚠️ WARNING", "[CI-005] PR Trigger + Write Access",
+                        "Workflow runs on PR with write permissions. Fork PRs can exfiltrate secrets.", "#f39c12"))
+        has_warning = True
+
+    # --- SARIF Report Generation ---
+    import sarif_output
+    import datetime
+    import os
+
+    report_dir = os.path.expanduser("~/.local/share/aur-security-dashboard/reports")
+    os.makedirs(report_dir, exist_ok=True)
+
+    timestamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    sarif_file = os.path.join(report_dir, f"workflow-{timestamp}.sarif")
+
+    try:
+        with open(sarif_file, 'w') as f:
+            f.write(sarif_output.generate_sarif(findings, "github-actions-workflow"))
+    except Exception as e:
+        print(f"Warning: Could not save workflow SARIF: {e}")
+
+    # --- Final Verdict Logic ---
+    if has_critical:
+        verdict = "🔴 MALICIOUS WORKFLOW DETECTED"
+        verdict_color = "#e74c3c"
+    elif has_warning:
+        verdict = "⚠️ SUSPICIOUS WORKFLOW"
+        verdict_color = "#f39c12"
+
+    return verdict, verdict_color, findings
 
         # 2. Build System Detection (Run on BOTH to catch obfuscated build calls)
-        build_systems = []
-        if "cargo " in scan_text or "cargo build" in scan_text: build_systems.append("Rust/Cargo")
-        if "cmake " in scan_text or "cmake .." in scan_text: build_systems.append("CMake")
-        if "ninja" in scan_text: build_systems.append("Ninja")
-        if "meson " in scan_text: build_systems.append("Meson")
-        if "go build" in scan_text: build_systems.append("Go")
-        if "pip install" in scan_text or "python setup.py" in scan_text: build_systems.append("Python/Pip")
-        # v1.1.4: Node.js supply chain detection
-        if "npm install" in scan_text or "npm i " in scan_text: build_systems.append("Node/NPM")
-        if "yarn install" in scan_text or "yarn add" in scan_text: build_systems.append("Node/Yarn")
-        if "pnpm install" in scan_text or "pnpm add" in scan_text: build_systems.append("Node/PNPM")
+    build_systems = []
+    if "cargo " in scan_text or "cargo build" in scan_text: build_systems.append("Rust/Cargo")
+    if "cmake " in scan_text or "cmake .." in scan_text: build_systems.append("CMake")
+    if "ninja" in scan_text: build_systems.append("Ninja")
+    if "meson " in scan_text: build_systems.append("Meson")
+    if "go build" in scan_text: build_systems.append("Go")
+    if "pip install" in scan_text or "python setup.py" in scan_text: build_systems.append("Python/Pip")
+    # v1.1.4: Node.js supply chain detection
+    if "npm install" in scan_text or "npm i " in scan_text: build_systems.append("Node/NPM")
+    if "yarn install" in scan_text or "yarn add" in scan_text: build_systems.append("Node/Yarn")
+    if "pnpm install" in scan_text or "pnpm add" in scan_text: build_systems.append("Node/PNPM")
 
-        if build_systems:
+    if build_systems:
             # Avoid duplicate build system findings
             if not any(f[1] == "Toolchain Detected" for f in findings):
                 findings.append(("🔧 BUILD", "Toolchain Detected", f"{', '.join(build_systems)} executes code during build outside this tool's view.", "#3498db"))
@@ -639,9 +717,97 @@ class SecurityApp(Adw.Application):
                     row_box.append(Gtk.Label(label=pkg["version"], xalign=1))
                     row.set_child(row_box)
                     self.aur_listbox.append(row)
+        
+        
+        # --- GitHub Actions / CI/CD Scanner Tab ---
+        self.workflow_listbox, self.workflow_scan_btn = make_tab(
+            "GitHub Actions / CI/CD Security Audit:", 
+            "📄 Scan Workflow YAML", 
+            "workflow", 
+            "CI/CD Audit"
+        )
+        
+
+        def scan_workflow_file(button=None):
             if button:
-                button.set_label("Rescan AUR Packages")
-                button.set_sensitive(True)
+                button.set_sensitive(False)
+                button.set_label("Scanning...")
+            
+            clear_listbox(self.workflow_listbox)
+            
+        def scan_workflow_file(button=None):
+            if button:
+                button.set_sensitive(False)
+                button.set_label("Scanning...")
+
+            dialog = Gtk.FileChooserNative.new(
+                title="Select GitHub Actions Workflow File",
+                parent=self.get_active_window(),
+                action=Gtk.FileChooserAction.OPEN,
+                accept_label="Scan",
+                cancel_label="Cancel"
+            )
+
+            yaml_filter = Gtk.FileFilter()
+            yaml_filter.set_name("YAML Files (*.yml, *.yaml)")
+            yaml_filter.add_pattern("*.yml")
+            yaml_filter.add_pattern("*.yaml")
+            dialog.add_filter(yaml_filter)
+
+            def on_response(dialog, response):
+                if response == Gtk.ResponseType.ACCEPT:
+                    gfile = dialog.get_file()
+                    file_path = gfile.get_path() if gfile else None
+                    
+                    if file_path:
+                        try:
+                            with open(file_path, 'r') as f:
+                                workflow_text = f.read()
+
+                            verdict, color, findings = analyze_workflow_content(workflow_text)
+
+                            clear_listbox(self.workflow_listbox)
+
+                            # Verdict row
+                            v_row = Gtk.ListBoxRow()
+                            v_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+                            v_box.set_margin_start(10)
+                            v_box.set_margin_end(10)
+                            v_box.set_margin_top(8)
+                            v_box.set_margin_bottom(8)
+                            v_box.append(Gtk.Label(label=f"<b>{verdict}</b>", use_markup=True, xalign=0))
+                            v_row.set_child(v_box)
+                            self.workflow_listbox.append(v_row)
+
+                            # Finding rows
+                            for severity, title, desc, _ in findings:
+                                row = Gtk.ListBoxRow()
+                                box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+                                box.set_margin_start(10)
+                                box.set_margin_end(10)
+                                box.set_margin_top(6)
+                                box.set_margin_bottom(6)
+                                box.append(Gtk.Label(label=f"{severity} — {title}", xalign=0))
+                                box.append(Gtk.Label(label=desc, xalign=0, wrap=True))
+                                row.set_child(box)
+                                self.workflow_listbox.append(row)
+
+                        except Exception as e:
+                            err_row = Gtk.ListBoxRow()
+                            err_row.set_child(Gtk.Label(label=f"Error: {e}", xalign=0, margin_start=10))
+                            self.workflow_listbox.append(err_row)
+
+                dialog.destroy()
+                if button:
+                    button.set_sensitive(True)
+                    button.set_label("📄 Scan Workflow YAML")
+
+            dialog.connect("response", on_response)
+            dialog.show()
+            
+                    
+                   
+        self.workflow_scan_btn.connect("clicked", scan_workflow_file)
 
         self.aur_scan_btn.connect("clicked", populate_aur)
 

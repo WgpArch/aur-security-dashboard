@@ -1,12 +1,61 @@
-[package]
-name = "rust-scanner"
-version = "0.1.0"
-edition = "2021"
+# ============================================================
+# AUR Security Dashboard - Detection Catalog v1.3.0
+# ============================================================
+# Format: [RULE_ID]
+#   severity = "CRITICAL" | "WARNING" | "INFO"
+#   title    = Human-readable name
+#   description = What was detected and why it matters
+#   cwe      = Common Weakness Enumeration reference
+# ============================================================
 
-[lib]
-name = "aur_scan"
-crate-type = ["cdylib"]
+# --- PKGBUILD Rules (WGP Series) ---
 
-[dependencies]
-pyo3 = { version = "0.20", features = ["extension-module"] }
-regex = "1.10"
+[WGP-001]
+severity = "CRITICAL"
+title = "Curl Pipe to Shell"
+description = "Detected curl output piped directly to bash/sh. This is the #1 indicator of malicious PKGBUILDs."
+cwe = "CWE-78"
+
+[WGP-002]
+severity = "CRITICAL"
+title = "Wget Pipe to Shell"
+description = "Detected wget output piped directly to bash/sh. Equivalent risk to WGP-001."
+cwe = "CWE-78"
+
+[WGP-003]
+severity = "WARNING"
+title = "Typosquat Risk"
+description = "Package name is suspiciously similar to an official Arch package. May be impersonation."
+cwe = "CWE-1357"
+
+# --- GitHub Actions / CI/CD Rules (CI Series) ---
+
+[CI-001]
+severity = "CRITICAL"
+title = "Secret Exfiltration via Curl/Wget"
+description = "Detected curl or wget piping output to shell in workflow run step. Primary indicator of credential theft."
+cwe = "CWE-798"
+
+[CI-002]
+severity = "WARNING"
+title = "Overly Permissive GITHUB_TOKEN"
+description = "Workflow uses 'write-all' permissions or unrestricted token scope. Violates principle of least privilege."
+cwe = "CWE-250"
+
+[CI-003]
+severity = "WARNING"
+title = "Unpinned Third-Party Action"
+description = "Action referenced by branch/tag instead of immutable SHA. Vulnerable to supply chain hijacking."
+cwe = "CWE-1357"
+
+[CI-004]
+severity = "CRITICAL"
+title = "Hardcoded Secret in Workflow"
+description = "Potential hardcoded API key, password, or token found in workflow YAML. Secrets must use ${{ secrets.* }} syntax."
+cwe = "CWE-798"
+
+[CI-005]
+severity = "WARNING"
+title = "Pull Request Trigger with Write Permissions"
+description = "Workflow runs on pull_request event with write access. Fork PRs can exfiltrate secrets."
+cwe = "CWE-668"

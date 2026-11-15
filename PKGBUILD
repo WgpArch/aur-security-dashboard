@@ -1,4 +1,17 @@
 # Maintainer: WgpArch <wgparch@riseup.net>
+pkgname=aur-security-dashboard
+pkgver=1.3.5
+pkgrel=1
+pkgdesc="A forensic-grade, local SIEM dashboard for Arch Linux to monitor system integrity, audit AUR packages, and hunt anomalies."
+arch=('any')
+url="https://github.com/WgpArch/aur-security-dashboard"
+license=('GPL-3.0-only')
+depends=('python' 'python-gobject' 'gtk4')
+makedepends=('git')
+source=("git+https://github.com/WgpArch/aur-security-dashboard.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+options=('!git')
+
 package() {
     cd "$srcdir/$pkgname"
 
@@ -7,6 +20,7 @@ package() {
 
     # Install Python module dependencies
     install -Dm644 sarif_output.py "$pkgdir/usr/bin/sarif_output.py"
+    install -Dm644 pam_bait_ui.py "$pkgdir/usr/bin/pam_bait_ui.py"
     install -Dm644 detection_catalog.toml "$pkgdir/usr/bin/detection_catalog.toml"
 
     # Install Rust scanner if present

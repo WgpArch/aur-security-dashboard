@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+import sys, traceback, os
+def _fatal_hook(etype, value, tb):
+    print(''.join(traceback.format_exception(etype, value, tb)), file=sys.stderr, flush=True)
+    os._exit(1)
+print("FATAL HOOK INSTALLED", file=sys.stderr, flush=True)
+sys.excepthook = _fatal_hook
 """
 AUR Security Dashboard
 A forensic-grade, local SIEM dashboard for Arch Linux.
@@ -606,9 +612,11 @@ class SecurityApp(Adw.Application):
             )
 
     def on_activate(self, app):
+        print("DEBUG: on_activate() called", file=sys.stderr, flush=True)
         self.win = Gtk.ApplicationWindow(application=app)
         self.win.set_title("AUR Security Dashboard")
         self.win.set_default_size(1400, 800)
+        print(f"DEBUG: Window created, title={self.win.get_title()}, size={self.win.get_default_size()}", file=sys.stderr, flush=True)
         self.win.set_size_request(1200, 700)
 
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -1558,14 +1566,25 @@ class SecurityApp(Adw.Application):
         self.stack.add_titled(settings_box, "settings", "Settings") 
 
         # =========================================================================
-        # TAB 13: PAM BAIT MONITOR
+        # TAB 13: PAM BAIT MONITOR (Lazy-loaded to prevent early GTK init)
         # =========================================================================
         try:
-            from pam_bait_ui import create_pam_bait_tab
-            pam_bait_box = create_pam_bait_tab(self)
-            self.stack.add_titled(pam_bait_box, "pam_bait", "PAM Bait Monitor")
-        except ImportError as e:
-            print(f"PAM Bait UI module not available: {e}")
+            import importlib
+            pam_bait_ui = importlib.import_module('pam_bait_ui')
+            create_pam_bait_tab = getattr(pam_bait_ui, 'create_pam_bait_tab', None)
+            if create_pam_bait_tab:
+                pam_bait_box = create_pam_bait_tab(self)
+                if pam_bait_box:
+                    self.stack.add_titled(pam_bait_box, "pam_bait", "PAM Bait Monitor")
+                    print("DEBUG: PAM Bait tab added to stack", file=sys.stderr, flush=True)
+                else:
+                    print("PAM Bait: Function returned None instead of a widget", file=sys.stderr, flush=True)
+            else:
+                print("PAM Bait: create_pam_bait_tab function not found", file=sys.stderr, flush=True)
+        except Exception as e:
+            print(f"PAM Bait UI FAILED with error: {e}", file=sys.stderr, flush=True)
+            import traceback
+            traceback.print_exc()
   
 
         # =========================================================================

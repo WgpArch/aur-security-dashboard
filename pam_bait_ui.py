@@ -5,7 +5,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 import json, os, subprocess, datetime
 from pathlib import Path
-from gi.repository import Gtk, GLib
+from gi.repository import Gtk, GLib, Pango
 
 LOG_DIR = Path("/var/lib/pam-bait/logs")
 FIFO_PATH = Path("/var/lib/pam-bait/pam_bait.fifo")
@@ -53,7 +53,7 @@ def create_pam_bait_tab(app):
     
     # Header
     header = Gtk.Label(label="PAM Bait Authentication Honeypot", xalign=0)
-    header.set_attributes(Gtk.pango_attr_list_new())
+    header.set_attributes(Pango.AttrList.new())
     box.append(header)
     
     # Status grid

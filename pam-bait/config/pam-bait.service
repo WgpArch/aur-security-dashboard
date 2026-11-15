@@ -1,0 +1,15 @@
+[Unit]
+Description=PAM Bait Authentication Honeypot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /usr/lib/pam-bait/pam_bait_daemon.py
+Restart=always
+RestartSec=5
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target

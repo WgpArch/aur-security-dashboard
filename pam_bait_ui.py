@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """PAM Bait Dashboard Integration Module."""
+import gi
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
 import json, os, subprocess, datetime
 from pathlib import Path
 from gi.repository import Gtk, GLib

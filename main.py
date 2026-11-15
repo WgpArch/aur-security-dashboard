@@ -1556,6 +1556,16 @@ class SecurityApp(Adw.Application):
           pass
           
         self.stack.add_titled(settings_box, "settings", "Settings") 
+
+        # =========================================================================
+        # TAB 13: PAM BAIT MONITOR
+        # =========================================================================
+        try:
+            from pam_bait_ui import create_pam_bait_tab
+            pam_bait_box = create_pam_bait_tab(self)
+            self.stack.add_titled(pam_bait_box, "pam_bait", "PAM Bait Monitor")
+        except ImportError as e:
+            print(f"PAM Bait UI module not available: {e}")
   
 
         # =========================================================================

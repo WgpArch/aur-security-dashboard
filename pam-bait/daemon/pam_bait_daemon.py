@@ -3,8 +3,8 @@
 import os, json, time, datetime, subprocess, threading
 from pathlib import Path
 
-CONFIG_DIR = Path.home() / ".config" / "aur-security-dashboard"
-LOG_DIR = CONFIG_DIR / "bait_logs"
+CONFIG_DIR = Path("/var/lib/pam-bait")
+LOG_DIR = CONFIG_DIR / "logs"
 FIFO_PATH = CONFIG_DIR / "pam_bait.fifo"
 
 def setup():

@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
 import sys, traceback, os
-def _fatal_hook(etype, value, tb):
-    print(''.join(traceback.format_exception(etype, value, tb)), file=sys.stderr, flush=True)
-    os._exit(1)
-print("FATAL HOOK INSTALLED", file=sys.stderr, flush=True)
-sys.excepthook = _fatal_hook
 """
 AUR Security Dashboard
 A forensic-grade, local SIEM dashboard for Arch Linux.
@@ -612,11 +607,9 @@ class SecurityApp(Adw.Application):
             )
 
     def on_activate(self, app):
-        print("DEBUG: on_activate() called", file=sys.stderr, flush=True)
         self.win = Gtk.ApplicationWindow(application=app)
         self.win.set_title("AUR Security Dashboard")
         self.win.set_default_size(1400, 800)
-        print(f"DEBUG: Window created, title={self.win.get_title()}, size={self.win.get_default_size()}", file=sys.stderr, flush=True)
         self.win.set_size_request(1200, 700)
 
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -706,8 +699,8 @@ class SecurityApp(Adw.Application):
 
         def populate_aur(button=None):
             if button:
-                button.set_sensitive(False)
-                button.set_label("Scanning...")
+                button.set_label("Rescan AUR Packages")
+                button.set_sensitive(True)
             clear_listbox(self.aur_listbox)
             pkgs = fetch_aur_packages()
             if not pkgs:
@@ -1466,17 +1459,20 @@ class SecurityApp(Adw.Application):
         actions_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10, margin_bottom=10)
 
         def refresh_all_clicked(b):
-            self.aur_scan_btn.clicked()
-            self.net_scan_btn.clicked()
-            self.sys_scan_btn.clicked()
-            self.suid_scan_btn.clicked()
-            self.auth_scan_btn.clicked()
-            self.proc_scan_btn.clicked()
-            self.svc_scan_btn.clicked()
-            self.code_scan_btn.clicked()
-            self.hardening_scan_btn.clicked()
-            print("Refresh All triggered!")
+            buttons = [self.aur_scan_btn, self.net_scan_btn, self.sys_scan_btn,
+                       self.suid_scan_btn, self.auth_scan_btn, self.proc_scan_btn,
+                       self.svc_scan_btn, self.code_scan_btn, self.hardening_scan_btn]
+            def fire(btn):
+                try:
+                    btn.set_sensitive(True)
+                    btn.emit("clicked")
+                except Exception as e:
+                    print("Refresh All: scans queued", file=sys.stderr, flush=True)
+                return GLib.SOURCE_REMOVE
+            for btn in buttons:
+                GLib.idle_add(fire, btn)
 
+        print("Refresh All: scans queued", file=sys.stderr, flush=True)
         def clear_all_clicked(b):
             for lb in [self.aur_listbox, self.net_listbox, self.sys_listbox, self.code_listbox,
                        self.auth_listbox, self.proc_listbox, self.systemd_listbox, self.sys_listbox,
@@ -1576,7 +1572,6 @@ class SecurityApp(Adw.Application):
                 pam_bait_box = create_pam_bait_tab(self)
                 if pam_bait_box:
                     self.stack.add_titled(pam_bait_box, "pam_bait", "PAM Bait Monitor")
-                    print("DEBUG: PAM Bait tab added to stack", file=sys.stderr, flush=True)
                 else:
                     print("PAM Bait: Function returned None instead of a widget", file=sys.stderr, flush=True)
             else:
@@ -1598,6 +1593,18 @@ class SecurityApp(Adw.Application):
         top_box.append(close_btn)
         main_box.prepend(top_box)
 
+        # --- Logical security-workflow order; Settings last ---
+        tab_order = ["aur", "pkgbuild", "diff", "code", "workflow",
+                     "processes", "network", "auth", "pam_bait",
+                     "suid", "systemd", "system", "hardening", "settings"]
+        for name in tab_order:
+            child = self.stack.get_child_by_name(name)
+            if child is None:
+                continue
+            page = self.stack.get_page(child)
+            title = page.get_title() if page else name
+            self.stack.remove(child)
+            self.stack.add_titled(child, name, title)
         main_box.append(self.stack)
         self.win.set_child(main_box)
         self.win.present()
